@@ -4,6 +4,8 @@ Receives triggers from Slack (slash commands or channel messages)
 and extracts search criteria and qualification rules.
 """
 import logging
+import os
+import sys
 from flask import Flask, request, jsonify
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
@@ -157,19 +159,26 @@ def run_server():
 
 
 if __name__ == "__main__":
-    # Test the parser
-    print("Testing Layer 1: Slack Listener")
-    print("=" * 50)
+    import sys
     
-    test_inputs = [
-        "Target: SaaS companies | Criteria: Size>50 employees, Industry=Technology",
-        "Find leads: SaaS companies with >50 employees",
-        "https://linkedin.com/company/acme-corp | Criteria: Size>100",
-    ]
-    
-    for test_input in test_inputs:
-        print(f"\nInput: {test_input}")
-        parsed = parse_natural_language_input(test_input)
-        print(f"Parsed: {parsed}\n")
-    
-    print("\nTo start the server, run: python layer1_slack_listener.py --server")
+    # Check if --server flag is passed or if running in production
+    if "--server" in sys.argv or os.getenv("RAILWAY_ENVIRONMENT"):
+        # Start the server
+        run_server()
+    else:
+        # Test the parser (for local testing)
+        print("Testing Layer 1: Slack Listener")
+        print("=" * 50)
+        
+        test_inputs = [
+            "Target: SaaS companies | Criteria: Size>50 employees, Industry=Technology",
+            "Find leads: SaaS companies with >50 employees",
+            "https://linkedin.com/company/acme-corp | Criteria: Size>100",
+        ]
+        
+        for test_input in test_inputs:
+            print(f"\nInput: {test_input}")
+            parsed = parse_natural_language_input(test_input)
+            print(f"Parsed: {parsed}\n")
+        
+        print("\nTo start the server, run: python layer1_slack_listener.py --server")
