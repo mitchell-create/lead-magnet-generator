@@ -1,0 +1,102 @@
+INSTALL PYTHON 3.12 - STEP BY STEP
+=====================================
+
+IMPORTANT: Python 3.12.12 only has source code (no Windows installer)
+Use Python 3.12.10 or 3.12.11 instead - both have Windows installers!
+
+
+OPTION 1: Download Python 3.12.10 (Recommended - Easiest)
+----------------------------------------------------------
+I've opened the download page in your browser.
+
+If it didn't open, go to:
+https://www.python.org/downloads/release/python-31210/
+
+Scroll down to "Files" section and download:
+👉 "Windows installer (64-bit)" 
+   File: python-3.12.10-amd64.exe
+
+
+OPTION 2: Use winget (Windows Package Manager)
+-----------------------------------------------
+Open PowerShell as Administrator and run:
+
+winget install Python.Python.3.12
+
+This will install the latest Python 3.12.x with Windows installer.
+
+
+OPTION 3: Use Microsoft Store
+------------------------------
+1. Open Microsoft Store
+2. Search for "Python 3.12"
+3. Install "Python 3.12" from Python Software Foundation
+
+
+STEP 2: Run the Installer (for Option 1)
+-----------------------------------------
+1. Find the downloaded file (usually in Downloads folder)
+2. Double-click: python-3.12.10-amd64.exe
+
+STEP 3: Important Installation Settings
+----------------------------------------
+⚠️ CRITICAL: During installation:
+
+1. At the bottom, CHECK: "Add Python 3.12 to PATH"
+   (This is VERY IMPORTANT!)
+
+2. Click "Install Now"
+
+3. Wait for installation to complete
+
+4. Click "Close" when done
+
+
+STEP 4: Verify Installation
+----------------------------
+Open a NEW PowerShell window (important - new window!) and run:
+
+py -3.12 --version
+
+OR
+
+python --version
+
+Should show: Python 3.12.10 (or 3.12.11, etc.)
+
+
+STEP 5: Install Dependencies for Python 3.12
+---------------------------------------------
+In the same PowerShell window, run:
+
+cd C:\Users\ReadyPlayerOne\lead-magnet-generator
+python -m pip install -r requirements.txt
+
+OR if py launcher:
+
+py -3.12 -m pip install -r requirements.txt
+
+
+STEP 6: Test Everything Works
+------------------------------
+Run our test script:
+
+python test_python.py
+
+OR
+
+py -3.12 test_python.py
+
+Should show all libraries as [OK]!
+
+
+QUICK REFERENCE:
+----------------
+After installation, Python 3.12 should be available as:
+  - python (if set as default)
+  - py -3.12 (using Python launcher)
+
+Examples:
+  python layer1_slack_listener.py
+  python main.py
+  python test_python.py

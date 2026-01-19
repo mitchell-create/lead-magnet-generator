@@ -1,0 +1,24 @@
+name: Deploy to Railway
+
+# This workflow is optional - Railway can auto-deploy directly from GitHub
+# If you prefer Railway's built-in auto-deploy, you can disable this workflow
+# and Railway will deploy automatically when you push to main branch
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  # Optional: Deploy step
+  # Note: Railway's built-in GitHub integration handles deployment automatically
+  # This workflow can be used for additional deployment steps if needed
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment triggered
+        run: |
+          echo "Code pushed to main branch"
+          echo "Railway will automatically deploy via GitHub integration"
+          echo "Check Railway dashboard for deployment status"
