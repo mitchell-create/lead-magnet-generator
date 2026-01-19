@@ -104,7 +104,7 @@ git push -u origin main
 
 **Variable 6:**
 - Name: `SLACK_SIGNING_SECRET`
-- Value: `e162fc8db05db56d9d6b20a1c23d5d04`
+- Value: `your-slack-signing-secret-here`
 
 **Variable 7:**
 - Name: `SLACK_PORT`
@@ -133,12 +133,12 @@ git push -u origin main
 
 **Add these secrets (optional - only if you want tests to use real API keys):**
 
-- Name: `PROSPEO_API_KEY` | Value: `pk_18aa056cf585e436de7ad62b3ccd7baf1ad9e633b7e403aa5f9a35ff7fb3b01d`
-- Name: `OPENROUTER_API_KEY` | Value: `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`
-- Name: `SUPABASE_URL` | Value: `https://utdwvqfnzkcysdsbsvwv.supabase.co`
-- Name: `SUPABASE_KEY` | Value: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0ZHd2cWZuemtjeXNkc2Jzdnd2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODc4NDk4OCwiZXhwIjoyMDg0MzYwOTg4fQ.tfYTjn7z0lbEJx7NnGeivyDPUrbqFHwOy0RgcO4IERs`
-- Name: `SLACK_BOT_TOKEN` | Value: `xoxb-3507979379937-10326210258854-Cm4WgC7tdXuW1k4XgeY7fueD`
-- Name: `SLACK_SIGNING_SECRET` | Value: `e162fc8db05db56d9d6b20a1c23d5d04`
+- Name: `PROSPEO_API_KEY` | Value: `your_prospeo_api_key_here`
+- Name: `OPENROUTER_API_KEY` | Value: `your_openrouter_api_key_here`
+- Name: `SUPABASE_URL` | Value: `your_supabase_url_here`
+- Name: `SUPABASE_KEY` | Value: `your_supabase_key_here`
+- Name: `SLACK_BOT_TOKEN` | Value: `xoxb-your-slack-bot-token-here`
+- Name: `SLACK_SIGNING_SECRET` | Value: `your-slack-signing-secret-here`
 
 **Note:** These are optional. The test workflow will still run without them (it will just skip config validation).
 

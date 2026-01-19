@@ -147,7 +147,7 @@ Click **"New Variable"** and add these one by one:
 
 **Variable 6:**
 - Key: `SLACK_SIGNING_SECRET`
-- Value: `e162fc8db05db56d9d6b20a1c23d5d04`
+- Value: `your-slack-signing-secret-here`
 - Click **"Add"**
 
 **Variable 7:**
