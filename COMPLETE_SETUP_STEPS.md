@@ -84,11 +84,11 @@ git push -u origin main
 
 **Variable 1:**
 - Name: `PROSPEO_API_KEY`
-- Value: `pk_18aa056cf585e436de7ad62b3ccd7baf1ad9e633b7e403aa5f9a35ff7fb3b01d`
+- Value: `pk_your_prospeo_api_key_here`
 
 **Variable 2:**
 - Name: `OPENROUTER_API_KEY`
-- Value: `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`
+- Value: `sk-or-v1-your-openrouter-api-key-here`
 
 **Variable 3:**
 - Name: `SUPABASE_URL`
@@ -96,11 +96,11 @@ git push -u origin main
 
 **Variable 4:**
 - Name: `SUPABASE_KEY`
-- Value: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0ZHd2cWZuemtjeXNkc2Jzdnd2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODc4NDk4OCwiZXhwIjoyMDg0MzYwOTg4fQ.tfYTjn7z0lbEJx7NnGeivyDPUrbqFHwOy0RgcO4IERs`
+- Value: `your_supabase_service_role_key_here`
 
 **Variable 5:**
 - Name: `SLACK_BOT_TOKEN`
-- Value: `xoxb-3507979379937-10326210258854-Cm4WgC7tdXuW1k4XgeY7fueD`
+- Value: `xoxb-your-slack-bot-token-here`
 
 **Variable 6:**
 - Name: `SLACK_SIGNING_SECRET`

@@ -122,12 +122,12 @@ Click **"New Variable"** and add these one by one:
 
 **Variable 1:**
 - Key: `PROSPEO_API_KEY`
-- Value: `pk_18aa056cf585e436de7ad62b3ccd7baf1ad9e633b7e403aa5f9a35ff7fb3b01d`
+- Value: `pk_your_prospeo_api_key_here`
 - Click **"Add"**
 
 **Variable 2:**
 - Key: `OPENROUTER_API_KEY`
-- Value: `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`
+- Value: `sk-or-v1-your-openrouter-api-key-here`
 - Click **"Add"**
 
 **Variable 3:**
@@ -137,12 +137,12 @@ Click **"New Variable"** and add these one by one:
 
 **Variable 4:**
 - Key: `SUPABASE_KEY`
-- Value: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0ZHd2cWZuemtjeXNkc2Jzdnd2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODc4NDk4OCwiZXhwIjoyMDg0MzYwOTg4fQ.tfYTjn7z0lbEJx7NnGeivyDPUrbqFHwOy0RgcO4IERs`
+- Value: `your_supabase_service_role_key_here`
 - Click **"Add"**
 
 **Variable 5:**
 - Key: `SLACK_BOT_TOKEN`
-- Value: `xoxb-3507979379937-10326210258854-Cm4WgC7tdXuW1k4XgeY7fueD`
+- Value: `xoxb-your-slack-bot-token-here`
 - Click **"Add"**
 
 **Variable 6:**
