@@ -154,8 +154,9 @@ def health_check():
 
 def run_server():
     """Run the Flask server to listen for Slack events."""
-    logger.info(f"Starting Slack listener on port {config.SLACK_PORT}")
-    flask_app.run(port=config.SLACK_PORT, debug=False)
+    port = int(os.getenv('PORT', config.SLACK_PORT))  # Railway sets PORT env var
+    logger.info(f"Starting Slack listener on port {port}")
+    flask_app.run(host='0.0.0.0', port=port, debug=False)
 
 
 if __name__ == "__main__":
