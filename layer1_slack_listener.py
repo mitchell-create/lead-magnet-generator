@@ -2,6 +2,8 @@
 Layer 1: Slack Listener
 Receives triggers from Slack (slash commands or channel messages)
 and extracts search criteria and qualification rules.
+
+Force rebuild to install new dependencies.
 """
 import logging
 import os
