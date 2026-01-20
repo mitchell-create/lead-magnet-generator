@@ -49,7 +49,7 @@ class ProspeoClient:
             payload["filters"] = filters
         else:
             # Prospeo requires filters, so add a minimal default if none provided
-            payload["filters"] = {"keywords": ["software"]}
+            payload["filters"] = {"keywords": "software"}
         
         try:
             logger.info(f"Fetching Prospeo page {page} with filters: {payload.get('filters')}")

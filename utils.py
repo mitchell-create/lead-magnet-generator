@@ -313,13 +313,14 @@ def build_prospeo_filters(parsed_input: Dict) -> Dict:
         elif isinstance(seniorities, str):
             filters['person_seniority'] = {"include": [seniorities]}
     
-    # Handle keywords
+    # Handle keywords - Prospeo expects string or comma-separated string, not list
     if 'keywords' in prospeo_filters:
         keywords = prospeo_filters['keywords']
         if isinstance(keywords, list) and keywords:
-            filters['keywords'] = keywords
+            # Convert list to comma-separated string (Prospeo format)
+            filters['keywords'] = ", ".join(keywords)
         elif isinstance(keywords, str):
-            filters['keywords'] = [keywords]
+            filters['keywords'] = keywords
     else:
         # Legacy support: check for search_keywords or target_companies
         keywords = []
@@ -339,7 +340,8 @@ def build_prospeo_filters(parsed_input: Dict) -> Dict:
                 if kw.lower() not in seen:
                     unique_keywords.append(kw)
                     seen.add(kw.lower())
-            filters['keywords'] = unique_keywords
+            # Convert to comma-separated string (Prospeo format)
+            filters['keywords'] = ", ".join(unique_keywords)
     
     # Handle only_verified_email (boolean)
     if 'only_verified_email' in prospeo_filters:
