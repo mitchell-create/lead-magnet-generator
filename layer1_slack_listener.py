@@ -182,6 +182,7 @@ def run_server():
     
     logger.info(f"Using port: {port}")
     logger.info(f"Starting Slack listener on port {port}")
+    # Force Railway rebuild - break cache for dependency installation
     # Bind to 0.0.0.0 to be accessible from outside container
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
