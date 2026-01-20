@@ -20,7 +20,8 @@ SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 TARGET_QUALIFIED_COUNT = 50
 MAX_PROCESSED_LEADS = 500
 PROSPEO_BATCH_SIZE = 25
-OPENROUTER_MODEL = "anthropic/claude-3-haiku"  # Cheap reasoning model
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/gpt-o1")  # Default model, can be overridden with OPENROUTER_MODEL env var
+# Note: Set OPENROUTER_MODEL to "gpt-oss-20b" or exact model name if different
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Prospeo API Configuration

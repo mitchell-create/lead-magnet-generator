@@ -1,6 +1,7 @@
 """
 Layer 3: AI Judge (Qualification)
 Uses OpenRouter API to qualify leads based on company description and criteria.
+Includes website scraping for better analysis.
 """
 import logging
 import os
@@ -8,6 +9,7 @@ from openai import OpenAI
 from typing import Dict, Optional, Tuple
 import config
 from utils import format_qualification_template, extract_person_and_company_data
+from website_scraper import WebsiteScraper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,6 +28,9 @@ class AIQualifier:
             api_key=self.api_key,
             base_url=self.base_url
         )
+        
+        # Initialize website scraper
+        self.scraper = WebsiteScraper()
     
     def qualify_person(
         self,
@@ -47,12 +52,27 @@ class AIQualifier:
         # Extract person and company data
         person_data, company_data = extract_person_and_company_data(prospeo_person_response)
         
-        # Format the qualification prompt
+        # Scrape website content for better analysis
+        company_website = company_data.get('website') or company_data.get('domain') or None
+        scraped_content = None
+        
+        if company_website:
+            try:
+                scraped_data = self.scraper.scrape_website(company_website)
+                if scraped_data:
+                    scraped_content = self.scraper.format_scraped_content_for_ai(scraped_data)
+                    logger.info(f"Scraped website content for {company_data.get('name')}")
+            except Exception as e:
+                logger.warning(f"Error scraping website {company_website}: {e}")
+                # Continue without scraped content
+        
+        # Format the qualification prompt (includes scraped content if available)
         prompt = format_qualification_template(
             person_data=person_data,
             company_data=company_data,
             target_companies=target_companies,
-            qualification_criteria=qualification_criteria
+            qualification_criteria=qualification_criteria,
+            scraped_content=scraped_content
         )
         
         try:
@@ -64,15 +84,15 @@ class AIQualifier:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a lead qualification assistant. You must respond with ONLY 'YES' or 'NO' based on whether a company meets the given criteria."
+                        "content": "You are a wholesale partner qualification assistant. Analyze the company website and LinkedIn to determine if they are a multi-brand retailer/reseller (YES) or a manufacturer who only sells their own products (NO). Respond with ONLY 'YES' or 'NO'."
                     },
                     {
                         "role": "user",
                         "content": prompt
                     }
                 ],
-                max_tokens=10,  # We only need YES or NO
-                temperature=0.1  # Low temperature for consistent responses
+                max_tokens=5,  # We only need YES or NO
+                temperature=0.0  # Zero temperature for deterministic responses
             )
             
             response_text = response.choices[0].message.content.strip().upper()

@@ -362,10 +362,11 @@ def format_qualification_template(
     person_data: Dict,
     company_data: Dict,
     target_companies: list,
-    qualification_criteria: Dict
+    qualification_criteria: Dict,
+    scraped_content: Optional[str] = None
 ) -> str:
     """
-    Format the qualification prompt template with dynamic data.
+    Format the wholesale partner qualification prompt template with dynamic data.
     
     Args:
         person_data: Person information from Prospeo
@@ -374,36 +375,89 @@ def format_qualification_template(
         qualification_criteria: Dictionary of qualification criteria
     
     Returns:
-        Formatted prompt string
+        Formatted prompt string for wholesale partner qualification
     """
-    # Build criteria description
-    criteria_parts = []
-    for key, value in qualification_criteria.items():
-        if isinstance(value, (int, float)):
-            criteria_parts.append(f"{key.replace('min_', '')} > {value}")
-        else:
-            criteria_parts.append(f"{key} = {value}")
-    criteria_text = ", ".join(criteria_parts) if criteria_parts else "No specific criteria provided"
+    # Get company website and LinkedIn from Prospeo data
+    company_website = company_data.get('website') or company_data.get('domain') or 'N/A'
+    # Try to get LinkedIn from person data or company data
+    company_linkedin = person_data.get('linkedin_url', '').replace('/in/', '/company/') if person_data.get('linkedin_url') else company_data.get('linkedin_url', 'N/A')
     
-    target_text = ", ".join(target_companies) if target_companies else "General search"
+    # If website is a domain, prepend https://
+    if company_website and company_website != 'N/A' and not company_website.startswith('http'):
+        company_website = f"https://{company_website}"
     
-    template = f"""You are evaluating if a company/person is a good fit for outreach.
+    # Build the comprehensive wholesale partner qualification prompt
+    template = f"""Determine if this company is a RETAILER/RESELLER who carries multiple brands (and could stock our products), or if they only sell their own products. 
 
-Target Companies/Industries: {target_text}
-Qualification Criteria: {criteria_text}
+GOOD FIT = Multi-brand retailers who resell other companies' products 
 
-Company Information:
-- Company Name: {company_data.get('name', 'N/A')}
-- Company Description: {company_data.get('description', 'N/A')}
-- Industry: {company_data.get('industry', 'N/A')}
-- Company Size: {company_data.get('size', 'N/A')}
-- Location: {company_data.get('location', 'N/A')}
+Why we want these companies: They stock and sell products from various brands, meaning they could potentially carry and resell OUR products in their store or catalog. 
 
-Person Information:
-- Name: {person_data.get('name', 'N/A')}
-- Title: {person_data.get('title', 'N/A')}
+Positive indicators to look for:
+- "Brands" (plural), "Companies We Carry," "Shop by Brand" in header/navigation/menu/footer WHY: This shows they organize their inventory by multiple brands they stock, not just their own
+- Brand filter dropdowns in product collections WHY: Filters allow customers to narrow down by brand, which only makes sense if they carry multiple brands
+- Product titles that lead with or end with brand names (e.g., "Stanley 2L Water Bottle" or "Water Bottle - Yeti") WHY: Including brand names in product titles indicates they're selling other companies' products and need to differentiate between brands
+- Multiple recognizable third-party brand names across different products WHY: Variety of brands proves they're a reseller, not just selling their own line
+- It's OK if they also sell some of their own branded products, as long as they primarily carry other brands WHY: Many retailers have a small house brand alongside the many brands they carry - this doesn't disqualify them
 
-Based on the above criteria, is this company a good fit? Reply with ONLY "YES" or "NO"."""
+NOT A FIT = Companies who only sell their own brand or would compete with us 
+
+Why we want to avoid these companies: These are manufacturers/brands who only sell their own products. They wouldn't stock our products - they would compete with us or expect us to distribute THEIR products. 
+
+Negative indicators to look for:
+- "Brand" (singular) section talking about their own company story WHY: Singular "brand" is usually an "About Us" page describing THEIR brand identity, not a catalog of brands they carry
+- "Dealers," "Dealer Sign Up," "Wholesale," "Become a Distributor/Seller," "Retail Partners" in menu/navigation/footer WHY: These pages are for recruiting OTHER stores to sell THEIR products, meaning they're the manufacturer/brand, not a retailer who would stock ours
+- "Where to Buy" or "Stockists" pages listing retail locations WHY: This shows where customers can buy THEIR products from other retailers - they're the brand being distributed, not the distributor
+- Product titles without brand names (just "2L Water Bottle" instead of "Stanley 2L Water Bottle") WHY: If all products lack brand prefixes, it's likely everything is their own brand (redundant to say "CompanyName 2L Water Bottle" on every product when it's all theirs)
+- FAQs reference only their own brand name (e.g., "How do I clean my [Company Name] products?") WHY: If FAQs only mention their brand, they don't carry other brands (otherwise FAQs would be generic or cover multiple brands)
+- Only sell brands within their own corporate umbrella/portfolio WHY: Some companies own multiple brands but don't stock outside products - they're still a closed system, not open to new suppliers
+- Focus on their own product development, innovation, or manufacturing WHY: Language about "our technology," "our designs," "we manufacture" indicates they're a brand/maker, not a reseller
+
+EXAMPLES:
+
+Example 1 - GOOD FIT:
+Website: https://cranes-country-store.com/
+Analysis: Has "Brands" (plural) section in header showing they organize by multiple brands. Product titles include brand names like "Stanley water bottles" proving they sell third-party products. Also sells their own "Crane's Gear" but primarily a multi-brand retailer → GOOD FIT
+
+Example 2 - GOOD FIT:
+Website: http://www.getzs.com
+Analysis: Has "All Brands" section in header. Collection pages have brand filter dropdown showing multiple brands they carry, which is only useful if stocking multiple brands → GOOD FIT
+
+Example 3 - NOT A FIT:
+Website: https://www.rockybrands.com/
+Analysis: Has "Brands" section but investigation shows they only sell brands within their own corporate portfolio (Rocky Brands Inc.). This is a closed portfolio system, not open to outside brands → NOT A FIT
+
+Example 4 - NOT A FIT:
+Website: https://www.freemanoutdoorgear.com/
+Analysis: "Brand" (singular) section is about their own company story. Has "Dealers" page showing OTHER stores sell their products, meaning they're the manufacturer looking for distributors, not a retailer who stocks other brands → NOT A FIT
+
+Example 5 - NOT A FIT:
+Website: https://viktos.com/
+Analysis: No "Brands" page. Product titles lack brand names (just "Ranger Trainer Boot" not "[Brand] Ranger Trainer Boot") indicating everything is their own line. "Dealer Sign Up" in footer means they recruit stores to sell THEIR products. FAQ asks "How do I clean my Viktos Apparel?" only mentioning their brand. They're a manufacturer selling TO retailers, not a retailer → NOT A FIT
+
+KEY INVESTIGATION STEPS:
+1. Check header/navigation/menu/footer for "Brands" (plural), "Companies We Carry," "Shop by Brand" vs "Brand" (singular)
+2. Look for "Dealers," "Wholesale," "Become a Distributor/Seller," "Stockists," or "Where to Buy" in menu/navigation/footer (red flag - they're a manufacturer)
+3. Check product titles - do they lead with or end with brand names? ("Stanley 2L Water Bottle" = good sign; "2L Water Bottle" = likely their own product)
+4. Look for brand filter options in product collections
+5. Check FAQ - does it reference only their own brand name?
+
+MAKING JUDGMENT CALLS:
+If a company shows BOTH positive and negative indicators, prioritize based on:
+- If they have "Dealers/Wholesale" pages AND sell multiple brands, they might be a hybrid (manufacturer + retailer) - mark as a GOOD FIT and note both aspects
+- If they have a "Brands" section but it's clearly only their portfolio companies, they're NOT A FIT
+- If they sell mostly other brands but have 1-2 of their own products mixed in, they're a GOOD FIT
+- The core question: "Would this company stock and resell OUR products, or would they expect US to distribute THEIRS?"
+
+Company Website: {company_website}
+Company LinkedIn: {company_linkedin}
+Company Name: {company_data.get('name', 'N/A')}
+Company Description: {company_data.get('description', 'N/A')}
+Company Industry: {company_data.get('industry', 'N/A')}
+
+{chr(10) + '='*80 + chr(10) + 'SCRAPED WEBSITE CONTENT:' + chr(10) + '='*80 + chr(10) + scraped_content + chr(10) + '='*80 if scraped_content else ''}
+
+VERDICT: Only respond with YES, if they are a good fit, or NO, if they are not a good fit or you are not sure."""
 
     return template
 
