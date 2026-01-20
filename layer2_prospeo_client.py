@@ -47,9 +47,12 @@ class ProspeoClient:
         # Add filters if provided
         if filters:
             payload["filters"] = filters
+        else:
+            # Prospeo requires filters, so add a minimal default if none provided
+            payload["filters"] = {"keywords": ["software"]}
         
         try:
-            logger.info(f"Fetching Prospeo page {page} with filters: {filters}")
+            logger.info(f"Fetching Prospeo page {page} with filters: {payload.get('filters')}")
             response = requests.post(
                 self.search_endpoint,
                 json=payload,
@@ -68,7 +71,14 @@ class ProspeoClient:
                 time.sleep(60)
                 return self.fetch_persons_page(page, limit, filters)  # Retry
             else:
-                logger.error(f"HTTP error fetching Prospeo page {page}: {e}")
+                # Log the actual error response for debugging
+                try:
+                    error_detail = response.json()
+                    logger.error(f"HTTP error fetching Prospeo page {page}: {e}")
+                    logger.error(f"Prospeo API error details: {error_detail}")
+                except:
+                    logger.error(f"HTTP error fetching Prospeo page {page}: {e}")
+                    logger.error(f"Response status: {response.status_code}, Response text: {response.text[:500]}")
                 raise
         except requests.exceptions.RequestException as e:
             logger.error(f"Request error fetching Prospeo page {page}: {e}")

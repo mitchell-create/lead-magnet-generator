@@ -30,6 +30,114 @@ class OutputManager:
         else:
             logger.warning("Supabase credentials not configured")
     
+    def save_lead_to_supabase(self, lead: Dict, metadata: Dict, is_qualified: bool = False) -> str:
+        """
+        Save a single lead to Supabase (called immediately after fetching from Prospeo).
+        
+        Args:
+            lead: Single lead dictionary from Prospeo
+            metadata: Metadata including Slack info, criteria, etc.
+            is_qualified: Whether this lead is qualified (default False, updated later)
+        
+        Returns:
+            ID of inserted record (or None if failed)
+        """
+        if not self.supabase:
+            return None
+        
+        # Extract person and company data
+        person_data, company_data = extract_person_and_company_data(lead)
+        
+        record = {
+            # Person Data
+            "person_id": person_data.get('id'),
+            "person_name": person_data.get('name'),
+            "person_email": person_data.get('email'),
+            "person_title": person_data.get('title'),
+            "person_linkedin_url": person_data.get('linkedin_url'),
+            
+            # Company Data
+            "company_id": company_data.get('id'),
+            "company_name": company_data.get('name'),
+            "company_description": company_data.get('description'),
+            "company_domain": company_data.get('domain'),
+            "company_website": company_data.get('website'),
+            "company_industry": company_data.get('industry'),
+            "company_size": company_data.get('size'),
+            "company_location": company_data.get('location'),
+            
+            # Qualification Metadata
+            "is_qualified": is_qualified,
+            "qualified_at": datetime.now().isoformat() if is_qualified else None,
+            "qualification_criteria": json.dumps(metadata.get('qualification_criteria', {})),
+            "search_criteria": metadata.get('search_criteria', ''),
+            "prospeo_page_number": lead.get('_prospeo_page'),
+            "processing_order": lead.get('_processing_order'),
+            
+            # Slack Metadata
+            "slack_user_id": metadata.get('slack_user_id'),
+            "slack_channel_id": metadata.get('slack_channel_id'),
+            "slack_trigger_id": metadata.get('slack_trigger_id'),
+            
+            # Full JSON
+            "raw_prospeo_data": lead,
+            "openrouter_response": lead.get('_openrouter_response')
+        }
+        
+        try:
+            response = self.supabase.table("lead_magnet_candidates").insert(record).execute()
+            if response.data:
+                record_id = response.data[0].get('id')
+                return record_id
+            return None
+        except Exception as e:
+            logger.error(f"Error inserting lead to Supabase: {e}")
+            raise
+    
+    def update_lead_qualification_status(self, lead: Dict, metadata: Dict, is_qualified: bool) -> bool:
+        """
+        Update qualification status for a lead already in Supabase.
+        
+        Args:
+            lead: Lead dictionary with metadata
+            metadata: Metadata including Slack info
+            is_qualified: New qualification status
+        
+        Returns:
+            True if updated successfully
+        """
+        if not self.supabase:
+            return False
+        
+        # Use slack_trigger_id + processing_order to identify the record
+        slack_trigger_id = metadata.get('slack_trigger_id')
+        processing_order = lead.get('_processing_order')
+        
+        if not slack_trigger_id or not processing_order:
+            logger.warning("Cannot update qualification status: missing trigger_id or processing_order")
+            return False
+        
+        update_data = {
+            "is_qualified": is_qualified,
+            "openrouter_response": lead.get('_openrouter_response', '')
+        }
+        
+        if is_qualified:
+            from datetime import datetime
+            update_data["qualified_at"] = datetime.now().isoformat()
+        
+        try:
+            response = self.supabase.table("lead_magnet_candidates")\
+                .update(update_data)\
+                .eq("slack_trigger_id", slack_trigger_id)\
+                .eq("processing_order", processing_order)\
+                .execute()
+            
+            return len(response.data) > 0 if response.data else False
+        except Exception as e:
+            logger.error(f"Error updating qualification status: {e}")
+            return False
+    
     def save_to_supabase(self, qualified_leads: List[Dict], metadata: Dict) -> int:
         """
         Save qualified leads to Supabase table.
@@ -70,6 +178,8 @@ class OutputManager:
                 "company_location": company_data.get('location'),
                 
                 # Qualification Metadata
+                "is_qualified": lead.get('_qualified', True),  # Assume qualified if in this list
+                "qualified_at": datetime.now().isoformat() if lead.get('_qualified', True) else None,
                 "qualification_criteria": json.dumps(metadata.get('qualification_criteria', {})),
                 "search_criteria": metadata.get('search_criteria', ''),
                 "prospeo_page_number": lead.get('_prospeo_page'),

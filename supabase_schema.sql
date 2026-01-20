@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS lead_magnet_candidates (
     company_location TEXT,
     
     -- Qualification Metadata
-    qualified_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_qualified BOOLEAN DEFAULT FALSE,  -- Whether AI qualified this lead
+    qualified_at TIMESTAMP WITH TIME ZONE,  -- When qualification happened (nullable if not qualified)
     qualification_criteria TEXT,  -- JSON of criteria used
     search_criteria TEXT,  -- Original search input
     prospeo_page_number INTEGER,
@@ -43,3 +44,5 @@ CREATE TABLE IF NOT EXISTS lead_magnet_candidates (
 CREATE INDEX IF NOT EXISTS idx_lead_magnet_created_at ON lead_magnet_candidates(created_at);
 CREATE INDEX IF NOT EXISTS idx_lead_magnet_company_domain ON lead_magnet_candidates(company_domain);
 CREATE INDEX IF NOT EXISTS idx_lead_magnet_slack_user ON lead_magnet_candidates(slack_user_id);
+CREATE INDEX IF NOT EXISTS idx_lead_magnet_is_qualified ON lead_magnet_candidates(is_qualified);
+CREATE INDEX IF NOT EXISTS idx_lead_magnet_slack_trigger ON lead_magnet_candidates(slack_trigger_id);

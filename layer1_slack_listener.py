@@ -37,7 +37,20 @@ def handle_slash_command(ack, respond, command):
     search_text = command.get('text', '')
     
     if not search_text:
-        respond("Please provide search criteria. Example: `/lead-magnet Target: SaaS companies | Criteria: Size>50`")
+        respond("""Please provide search criteria. 
+
+**New Format:**
+`/lead-magnet industry=SaaS,Fintech | location=California | seniority=Founder,C-Suite | verified-email=true | size>50`
+
+**Available Filters:**
+- `industry=` - Company industries (comma-separated)
+- `location=` - Locations (comma-separated)  
+- `seniority=` - Seniority levels (comma-separated)
+- `keywords=` - Keywords (comma-separated)
+- `verified-email=` - true/false
+
+**Example:**
+`/lead-magnet keywords=golf pro shops | seniority=Founder | location=United States`""")
         return
     
     # Parse the input

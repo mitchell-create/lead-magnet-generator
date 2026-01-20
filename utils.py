@@ -8,20 +8,146 @@ from typing import Dict, Optional, Tuple
 
 def parse_natural_language_input(text: str) -> Dict[str, any]:
     """
-    Parse natural language Slack input to extract search criteria and qualification rules.
+    Parse Slack input to extract Prospeo search filters and AI qualification criteria.
     
-    Expected formats:
+    New Format:
+    - "industry=SaaS,Fintech | location=California | seniority=Founder | verified-email=true | size>50"
+    - "keywords=golf pro shops | seniority=C-Suite,VP | location=United States"
+    
+    Legacy Format (still supported):
     - "Target: Company1, Company2 | Criteria: Industry=SaaS, Size>50"
-    - "Find leads: SaaS companies with >50 employees"
-    - "Search for: [keywords] | Good fit: [criteria]"
     
     Returns:
-        dict with keys: 'target_companies', 'search_keywords', 'qualification_criteria'
+        dict with keys: 'prospeo_filters', 'qualification_criteria', 'raw_text'
+    """
+    result = {
+        'prospeo_filters': {},
+        'qualification_criteria': {},
+        'raw_text': text,
+        # Legacy fields for backwards compatibility
+        'target_companies': [],
+        'search_keywords': []
+    }
+    
+    # Split by | to separate Prospeo filters from AI qualification
+    parts = text.split('|')
+    prospeo_part = parts[0].strip() if len(parts) > 0 else text.strip()
+    qualification_part = parts[1].strip() if len(parts) > 1 else ""
+    
+    # Parse Prospeo filters (left side of |)
+    if prospeo_part:
+        result['prospeo_filters'] = parse_prospeo_filters(prospeo_part)
+    
+    # Parse AI qualification criteria (right side of |)
+    if qualification_part:
+        result['qualification_criteria'] = parse_criteria_string(qualification_part)
+    
+    # Legacy parsing for backwards compatibility
+    # Check if it's legacy format first
+    if 'target:' in text.lower() or 'criteria:' in text.lower():
+        return parse_legacy_format(text)
+    
+    # Extract keywords for legacy compatibility
+    if 'keywords' in result['prospeo_filters']:
+        result['search_keywords'] = result['prospeo_filters']['keywords']
+    
+    return result
+
+
+def parse_prospeo_filters(filter_text: str) -> Dict[str, any]:
+    """
+    Parse Prospeo filter string into dictionary.
+    
+    Format: filter_name=value1,value2 | filter_name=value
+    Examples:
+    - "industry=SaaS,Fintech"
+    - "location=California,New York | seniority=Founder,C-Suite"
+    - "keywords=golf pro shops | verified-email=true"
+    
+    Returns:
+        Dictionary of Prospeo filters
+    """
+    filters = {}
+    
+    # Split by spaces (filters are space-separated, values are comma-separated)
+    # Handle quoted values that might contain spaces
+    parts = []
+    current_part = ""
+    in_quotes = False
+    
+    for char in filter_text:
+        if char == '"':
+            in_quotes = not in_quotes
+            current_part += char
+        elif char == ' ' and not in_quotes:
+            if current_part.strip():
+                parts.append(current_part.strip())
+            current_part = ""
+        else:
+            current_part += char
+    
+    if current_part.strip():
+        parts.append(current_part.strip())
+    
+    # Parse each filter
+    for part in parts:
+        if '=' in part:
+            key, value = part.split('=', 1)
+            key = key.strip().lower()
+            value = value.strip().strip('"').strip("'")
+            
+            # Map Slack filter names to Prospeo API names
+            prospeo_key = map_filter_name_to_prospeo(key)
+            
+            # Parse value (handle comma-separated lists and booleans)
+            if prospeo_key == 'only_verified_email':
+                # Boolean filter
+                filters[prospeo_key] = value.lower() in ['true', '1', 'yes', 'on']
+            elif ',' in value:
+                # Multiple values (comma-separated)
+                filters[prospeo_key] = [v.strip() for v in value.split(',')]
+            else:
+                # Single value (convert to list for consistency)
+                filters[prospeo_key] = [value] if value else []
+    
+    return filters
+
+
+def map_filter_name_to_prospeo(slack_filter_name: str) -> str:
+    """
+    Map Slack filter names to Prospeo API filter names.
+    
+    Slack Name -> Prospeo API Name
+    """
+    mapping = {
+        'industry': 'company_industry',
+        'company_industry': 'company_industry',
+        'location': 'company_location',  # Default to company_location, could be person_location
+        'company_location': 'company_location',
+        'person_location': 'person_location',
+        'seniority': 'person_seniority',
+        'person_seniority': 'person_seniority',
+        'keywords': 'keywords',
+        'verified-email': 'only_verified_email',
+        'verified_email': 'only_verified_email',
+        'only_verified_email': 'only_verified_email',
+    }
+    return mapping.get(slack_filter_name, slack_filter_name)
+
+
+def parse_legacy_format(text: str) -> Dict[str, any]:
+    """
+    Parse legacy format for backwards compatibility.
+    
+    Formats:
+    - "Target: Company1, Company2 | Criteria: Industry=SaaS, Size>50"
+    - "Find leads: SaaS companies with >50 employees"
     """
     result = {
         'target_companies': [],
         'search_keywords': [],
         'qualification_criteria': {},
+        'prospeo_filters': {},
         'raw_text': text
     }
     
@@ -60,6 +186,16 @@ def parse_natural_language_input(text: str) -> Dict[str, any]:
     industry_match = re.search(industry_pattern, text, re.IGNORECASE)
     if industry_match:
         result['qualification_criteria']['industry'] = industry_match.group(1)
+        result['prospeo_filters']['company_industry'] = [industry_match.group(1)]
+    
+    # Convert legacy to new format
+    if result['target_companies']:
+        result['prospeo_filters']['keywords'] = result['target_companies']
+    if result['search_keywords']:
+        if 'keywords' in result['prospeo_filters']:
+            result['prospeo_filters']['keywords'].extend(result['search_keywords'])
+        else:
+            result['prospeo_filters']['keywords'] = result['search_keywords']
     
     return result
 
@@ -129,27 +265,95 @@ def build_prospeo_filters(parsed_input: Dict) -> Dict:
     """
     Convert parsed input to Prospeo API filter format.
     
+    Supports:
+    - company_industry (list)
+    - company_location (list)
+    - person_location (list)
+    - person_seniority (list)
+    - keywords (list)
+    - only_verified_email (boolean)
+    
     Returns filters dictionary ready for Prospeo API.
+    Format: {"filter_name": {"include": [...]}} or {"filter_name": true/false}
     """
     filters = {}
     
-    # Map target companies to company filters
-    if parsed_input.get('target_companies'):
-        # If we have company names, we might search by company name
-        # Note: Adjust based on actual Prospeo API filter structure
-        filters['company_name'] = parsed_input['target_companies']
+    # Get prospeo_filters from parsed input (new format)
+    prospeo_filters = parsed_input.get('prospeo_filters', {})
     
-    # Map industry keywords
-    if parsed_input.get('search_keywords'):
-        filters['keywords'] = parsed_input['search_keywords']
+    # Handle company_industry
+    if 'company_industry' in prospeo_filters:
+        industries = prospeo_filters['company_industry']
+        if isinstance(industries, list) and industries:
+            filters['company_industry'] = {"include": industries}
+        elif isinstance(industries, str):
+            filters['company_industry'] = {"include": [industries]}
     
-    # Map qualification criteria that can be used for initial filtering
+    # Handle company_location
+    if 'company_location' in prospeo_filters:
+        locations = prospeo_filters['company_location']
+        if isinstance(locations, list) and locations:
+            filters['company_location'] = {"include": locations}
+        elif isinstance(locations, str):
+            filters['company_location'] = {"include": [locations]}
+    
+    # Handle person_location
+    if 'person_location' in prospeo_filters:
+        locations = prospeo_filters['person_location']
+        if isinstance(locations, list) and locations:
+            filters['person_location'] = {"include": locations}
+        elif isinstance(locations, str):
+            filters['person_location'] = {"include": [locations]}
+    
+    # Handle person_seniority
+    if 'person_seniority' in prospeo_filters:
+        seniorities = prospeo_filters['person_seniority']
+        if isinstance(seniorities, list) and seniorities:
+            filters['person_seniority'] = {"include": seniorities}
+        elif isinstance(seniorities, str):
+            filters['person_seniority'] = {"include": [seniorities]}
+    
+    # Handle keywords
+    if 'keywords' in prospeo_filters:
+        keywords = prospeo_filters['keywords']
+        if isinstance(keywords, list) and keywords:
+            filters['keywords'] = keywords
+        elif isinstance(keywords, str):
+            filters['keywords'] = [keywords]
+    else:
+        # Legacy support: check for search_keywords or target_companies
+        keywords = []
+        if parsed_input.get('search_keywords'):
+            keywords.extend(parsed_input['search_keywords'])
+        if parsed_input.get('target_companies'):
+            # Convert target companies to keywords
+            for company in parsed_input['target_companies']:
+                cleaned = company.lower().replace('companies', '').replace('company', '').strip()
+                if cleaned:
+                    keywords.append(cleaned)
+        if keywords:
+            # Remove duplicates
+            unique_keywords = []
+            seen = set()
+            for kw in keywords:
+                if kw.lower() not in seen:
+                    unique_keywords.append(kw)
+                    seen.add(kw.lower())
+            filters['keywords'] = unique_keywords
+    
+    # Handle only_verified_email (boolean)
+    if 'only_verified_email' in prospeo_filters:
+        filters['only_verified_email'] = prospeo_filters['only_verified_email']
+    
+    # Legacy support: map industry from qualification_criteria
     qual_criteria = parsed_input.get('qualification_criteria', {})
-    if 'industry' in qual_criteria:
-        filters['industry'] = qual_criteria['industry']
+    if 'industry' in qual_criteria and 'company_industry' not in filters:
+        industry = qual_criteria['industry']
+        filters['company_industry'] = {"include": [industry]}
     
-    if 'min_employees' in qual_criteria:
-        filters['company_size_min'] = qual_criteria['min_employees']
+    # If no filters at all, add default keywords to avoid 400 error
+    if not filters:
+        filters['keywords'] = ["software"]
     
     return filters
 

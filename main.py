@@ -53,19 +53,7 @@ def process_lead_search(trigger_data: Dict):
         # Initialize processor
         processor = LeadProcessor()
         
-        # Process leads
-        result = processor.process_until_qualified(
-            target_count=config.TARGET_QUALIFIED_COUNT,
-            max_processed=config.MAX_PROCESSED_LEADS,
-            filters=prospeo_filters,
-            target_companies=target_companies,
-            qualification_criteria=qualification_criteria
-        )
-        
-        stats = result['stats']
-        qualified_leads = result['qualified_leads']
-        
-        # Prepare metadata for output
+        # Prepare metadata for output (needed during processing for saving leads)
         output_metadata = {
             'search_criteria': trigger_data.get('raw_text', ''),
             'qualification_criteria': qualification_criteria,
@@ -74,18 +62,25 @@ def process_lead_search(trigger_data: Dict):
             'slack_trigger_id': trigger_data.get('slack_trigger_id')
         }
         
-        # Save to Supabase and generate CSV
+        # Process leads (saves all leads to Supabase, then qualifies)
+        result = processor.process_until_qualified(
+            target_count=config.TARGET_QUALIFIED_COUNT,
+            max_processed=config.MAX_PROCESSED_LEADS,
+            filters=prospeo_filters,
+            target_companies=target_companies,
+            qualification_criteria=qualification_criteria,
+            output_metadata=output_metadata
+        )
+        
+        stats = result['stats']
+        qualified_leads = result['qualified_leads']
+        
+        # Note: All leads are already saved to Supabase during processing
+        # Now just generate CSV with qualified leads
         output_manager = OutputManager()
         
         if qualified_leads:
-            # Save to Supabase
-            try:
-                supabase_count = output_manager.save_to_supabase(qualified_leads, output_metadata)
-                logger.info(f"Saved {supabase_count} leads to Supabase")
-            except Exception as e:
-                logger.error(f"Error saving to Supabase: {e}")
-            
-            # Generate CSV
+            # Generate CSV (only qualified leads)
             try:
                 csv_path = output_manager.generate_csv(qualified_leads, output_metadata)
                 logger.info(f"Generated CSV: {csv_path}")
@@ -93,8 +88,11 @@ def process_lead_search(trigger_data: Dict):
                 logger.error(f"Error generating CSV: {e}")
                 csv_path = None
         else:
-            logger.warning("No qualified leads to save")
+            logger.warning("No qualified leads found")
             csv_path = None
+        
+        # Log summary
+        logger.info(f"Processing complete: {stats['total_processed']} total leads saved, {stats['qualified_count']} qualified")
         
         # Send completion notification
         message = f"""✅ Lead search completed!

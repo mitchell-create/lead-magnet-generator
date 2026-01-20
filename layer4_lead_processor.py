@@ -1,6 +1,7 @@
 """
 Layer 4: The Loop (Core Logic)
 Processes leads in batches until exactly 50 qualified leads are found.
+Saves ALL leads to Supabase first, then qualifies them.
 Includes kill switch at 500 processed leads.
 """
 import logging
@@ -8,6 +9,7 @@ from typing import List, Dict
 import config
 from layer2_prospeo_client import ProspeoClient
 from layer3_ai_judge import AIQualifier
+from layer5_output import OutputManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,6 +21,7 @@ class LeadProcessor:
     def __init__(self):
         self.prospeo_client = ProspeoClient()
         self.ai_qualifier = AIQualifier()
+        self.output_manager = OutputManager()
     
     def process_until_qualified(
         self,
@@ -26,7 +29,8 @@ class LeadProcessor:
         max_processed: int = None,
         filters: Dict = None,
         target_companies: list = None,
-        qualification_criteria: Dict = None
+        qualification_criteria: Dict = None,
+        output_metadata: Dict = None
     ) -> Dict:
         """
         Process leads until target count of qualified leads is reached.
@@ -65,7 +69,7 @@ class LeadProcessor:
                     logger.info(f"No more results after page {current_page - 1}")
                     break
                 
-                # Qualify each lead
+                # Process each lead: Save first, then qualify
                 for person in persons:
                     if total_processed >= max_processed:
                         logger.warning(f"Reached max processed limit ({max_processed})")
@@ -77,7 +81,25 @@ class LeadProcessor:
                     
                     total_processed += 1
                     
-                    # Qualify the lead
+                    # Add metadata for tracking
+                    person['_prospeo_page'] = current_page
+                    person['_processing_order'] = total_processed
+                    person['_qualified'] = False  # Default to unqualified
+                    
+                    # Save ALL leads to Supabase immediately (before qualification)
+                    try:
+                        if output_metadata:
+                            self.output_manager.save_lead_to_supabase(
+                                person, 
+                                output_metadata, 
+                                is_qualified=False
+                            )
+                            logger.debug(f"Saved lead {total_processed} to Supabase (before qualification)")
+                    except Exception as e:
+                        logger.warning(f"Error saving lead to Supabase: {e}")
+                        # Continue even if save fails
+                    
+                    # Now qualify the lead
                     try:
                         is_qualified, response_text = self.ai_qualifier.qualify_person(
                             prospeo_person_response=person,
@@ -85,14 +107,35 @@ class LeadProcessor:
                             qualification_criteria=qualification_criteria or {}
                         )
                         
+                        # Update qualification status in Supabase
+                        person['_qualified'] = is_qualified
+                        person['_openrouter_response'] = response_text
+                        
                         if is_qualified:
-                            # Add metadata
-                            person['_qualified'] = True
-                            person['_openrouter_response'] = response_text
-                            person['_prospeo_page'] = current_page
-                            person['_processing_order'] = total_processed
+                            # Update the record in Supabase with qualification status
+                            try:
+                                if output_metadata:
+                                    self.output_manager.update_lead_qualification_status(
+                                        person, 
+                                        output_metadata,
+                                        is_qualified=True
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Error updating qualification status: {e}")
+                            
                             qualified_leads.append(person)
                             logger.info(f"✅ Qualified lead {len(qualified_leads)}/{target_count}: {person.get('company', {}).get('name', 'Unknown')}")
+                        else:
+                            # Update record to mark as unqualified
+                            try:
+                                if output_metadata:
+                                    self.output_manager.update_lead_qualification_status(
+                                        person,
+                                        output_metadata,
+                                        is_qualified=False
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Error updating qualification status: {e}")
                         
                     except Exception as e:
                         logger.error(f"Error qualifying lead: {e}")
