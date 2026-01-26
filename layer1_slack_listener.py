@@ -9,7 +9,9 @@ import logging
 import os
 import sys
 import threading
-from flask import Flask, request, jsonify
+from io import BytesIO
+from urllib.parse import parse_qs
+from flask import Flask, request, jsonify, g
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from utils import parse_natural_language_input
@@ -35,11 +37,16 @@ def handle_slash_command(ack, respond, command):
     """
     Handle Slack slash command: /lead-magnet <criteria>
     """
-    ack()  # Acknowledge the command immediately
-    
-    # Extract search criteria from command text
-    search_text = command.get('text', '')
-    
+    try:
+        ack()  # Acknowledge the command immediately so Slack gets 200 within 3s
+    except Exception as e:
+        logger.error(f"ack() failed: {e}", exc_info=True)
+        return
+
+    # Use text from raw POST body when set in slack_commands() so multi-word values (e.g. "General Retail") are preserved.
+    # Slack sends the full string; Bolt’s command["text"] can sometimes expose only the first token.
+    search_text = (getattr(g, "slash_command_raw_text", None) or command.get("text") or "").strip()
+
     if not search_text:
         respond("""Please provide search criteria. 
 
@@ -211,6 +218,20 @@ def slack_events():
 @flask_app.route("/slack/commands", methods=["POST"])
 def slack_commands():
     """Handle Slack Slash Commands."""
+    # Parse raw body for "text" before Bolt runs, so multi-word values (e.g. "General Retail") are preserved.
+    # Slack sends application/x-www-form-urlencoded; some stacks truncate at space when parsing.
+    try:
+        raw = request.get_data(as_text=False)
+        if raw:
+            params = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+            raw_text = (params.get("text") or [""])[0]
+            g.slash_command_raw_text = (raw_text or "").strip()
+            request.environ["wsgi.input"] = BytesIO(raw)
+        else:
+            g.slash_command_raw_text = None
+    except Exception as e:
+        logger.warning("Could not parse slash command body for raw text: %s", e)
+        g.slash_command_raw_text = None
     return handler.handle(request)
 
 

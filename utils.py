@@ -27,8 +27,10 @@ def parse_natural_language_input(text: str) -> Dict:
     if not text:
         return result
     
-    # Split by | or space for filter separation
-    filters = re.split(r'\||\s+', text)
+    # Split on | or on space(s) that are followed by "key=" so multi-word values stay intact.
+    # e.g. "industry=General Retail" is one segment; "industry=General Retail | location=CA" or
+    # "industry=General Retail location=CA" both give industry="General Retail" and location="CA".
+    filters = re.split(r'\s*\|\s*|\s+(?=[\w-]+=)', text)
     
     for filter_part in filters:
         filter_part = filter_part.strip()
