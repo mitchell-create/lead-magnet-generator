@@ -5,6 +5,20 @@ import re
 import json
 from typing import Dict, Optional, Tuple, List, Any
 
+# Prospeo expects "Founder/Owner"; allow "Founder" or "Owner" as shortcuts (case-insensitive)
+SENIORITY_ALIASES = {
+    "founder": "Founder/Owner",
+    "owner": "Founder/Owner",
+}
+
+
+def _normalize_seniority(value: str) -> str:
+    """Map user-friendly seniority to Prospeo enum value."""
+    v = (value or "").strip()
+    if not v:
+        return v
+    return SENIORITY_ALIASES.get(v.lower(), v)
+
 
 def parse_natural_language_input(text: str) -> Dict:
     """
@@ -59,7 +73,7 @@ def parse_natural_language_input(text: str) -> Dict:
             elif key == 'location':
                 result['prospeo_filters']['company_location'] = values
             elif key == 'seniority':
-                result['prospeo_filters']['person_seniority'] = values
+                result['prospeo_filters']['person_seniority'] = [_normalize_seniority(v) for v in values]
             elif key == 'our-company-details':
                 result['qualification_criteria']['our_company_details'] = value
     
