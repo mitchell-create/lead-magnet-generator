@@ -20,7 +20,8 @@ SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 TARGET_QUALIFIED_COUNT = 50
 MAX_PROCESSED_LEADS = 500
 PROSPEO_BATCH_SIZE = 25
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b")  # GPT OSS 20B only; override via OPENROUTER_MODEL
+# Only gpt-oss-20b. Override via OPENROUTER_MODEL if needed (must be openai/gpt-oss-20b or equivalent).
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Prospeo API Configuration
