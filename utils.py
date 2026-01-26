@@ -135,15 +135,11 @@ def build_prospeo_filters(parsed_input: Dict, include_seniority: bool = False) -
     #             'include': [location_values]
     #         }
     
-    # Company keywords for /search-company (Prospeo supports this on company search)
-    # Per COMPANY_SEARCH_UPDATE.md, /search-company accepts company_keywords as a string.
-    # If the API returns INVALID_FILTERS for this field, we can fall back to AI-only keyword use.
-    if 'company_keywords' in prospeo_filters and prospeo_filters['company_keywords']:
-        kw = prospeo_filters['company_keywords']
-        filters['company_keywords'] = (
-            kw if isinstance(kw, str) else ', '.join(kw) if isinstance(kw, (list, tuple)) else str(kw)
-        )
-    
+    # Do NOT send company_keywords to Prospeo: the API rejects many phrases (e.g. "golf pro shops")
+    # with INVALID_FILTERS. Use only industry/location for company discovery; keywords from
+    # parsed_input (target_companies, search_keywords) are used for AI qualification only.
+    # if 'company_keywords' in prospeo_filters ...  # intentionally omitted
+
     # Person-level filters (only if include_seniority is True, for /search-person)
     if include_seniority and 'person_seniority' in prospeo_filters:
         filters['person_seniority'] = {
