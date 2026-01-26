@@ -104,9 +104,14 @@ Find leads: SaaS companies with >50 employees in Technology industry
 - Adjust filters in `utils.py` if needed
 
 ### OpenRouter Errors
-- Verify API key is set
-- Check model name is correct (default: `anthropic/claude-3-haiku`)
-- Verify you have credits in OpenRouter
+- Verify `OPENROUTER_API_KEY` is set in `.env` (or Railway) and is valid in the OpenRouter dashboard.
+- Check model name is correct (default: `openai/gpt-oss-20b` via `OPENROUTER_MODEL`).
+- Verify you have credits in OpenRouter.
+
+**401 Unauthorized and “enrichments using OpenRouter”:**  
+Supabase does **not** call OpenRouter. This app calls OpenRouter only in **layer3 (AI Judge)** for wholesale/keyword checks. “Enrichment” here means **Prospeo email/contact enrichment**, not OpenRouter. If you see 401 in the context of OpenRouter:
+- Check **app logs** (e.g. Railway, local console) for the failing HTTP request; that’s where 401 will appear.
+- Ensure the env that runs the app has the correct `OPENROUTER_API_KEY` and that the key is not revoked or expired.
 
 ### Supabase Errors
 - Verify table schema matches `supabase_schema.sql`
@@ -120,3 +125,4 @@ Find leads: SaaS companies with >50 employees in Technology industry
 3. Set up Slack app and configure webhook URLs
 4. Deploy to a server with public IP for Slack webhooks
 5. Monitor logs for errors and adjust as needed
+

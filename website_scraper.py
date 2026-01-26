@@ -29,6 +29,10 @@ class WebsiteScraper:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        # Create a session with proxies disabled to avoid Windows proxy issues
+        self.session = requests.Session()
+        self.session.proxies = {'http': None, 'https': None}
+        self.session.trust_env = False
     
     def scrape_website(self, url: str) -> Optional[Dict[str, str]]:
         """
@@ -51,7 +55,7 @@ class WebsiteScraper:
             logger.info(f"Scraping website: {url}")
             
             # Fetch the page
-            response = requests.get(
+            response = self.session.get(
                 url,
                 headers=self.headers,
                 timeout=self.timeout,

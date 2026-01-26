@@ -20,13 +20,13 @@ SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 TARGET_QUALIFIED_COUNT = 50
 MAX_PROCESSED_LEADS = 500
 PROSPEO_BATCH_SIZE = 25
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/gpt-o1")  # Default model, can be overridden with OPENROUTER_MODEL env var
-# Note: Set OPENROUTER_MODEL to "gpt-oss-20b" or exact model name if different
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b")  # GPT OSS 20B only; override via OPENROUTER_MODEL
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Prospeo API Configuration
 PROSPEO_BASE_URL = "https://api.prospeo.io"
 PROSPEO_SEARCH_PERSON_ENDPOINT = f"{PROSPEO_BASE_URL}/search-person"
+PROSPEO_SEARCH_COMPANY_ENDPOINT = f"{PROSPEO_BASE_URL}/search-company"
 
 # Flask/Slack Configuration
 SLACK_PORT = int(os.getenv("SLACK_PORT", "3000"))

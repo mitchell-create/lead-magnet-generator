@@ -17,6 +17,7 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from utils import parse_natural_language_input
 from validators import validate_slack_command
 import config
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,23 +33,45 @@ flask_app = Flask(__name__)
 trigger_queue = []
 
 
-@app.command("/lead-magnet")
-def handle_slash_command(ack, respond, command):
-    """
-    Handle Slack slash command: /lead-magnet <criteria>
-    """
-    try:
-        ack()  # Acknowledge the command immediately so Slack gets 200 within 3s
-    except Exception as e:
-        logger.error(f"ack() failed: {e}", exc_info=True)
+def _post_to_response_url(response_url: str, text: str) -> None:
+    """Post a message to Slack's response_url (e.g. for validation errors from background thread)."""
+    if not response_url:
         return
+    try:
+        requests.post(response_url, json={"text": text}, timeout=5)
+    except Exception as e:
+        logger.warning("Failed to post to response_url: %s", e)
 
-    # Use text from raw POST body when set in slack_commands() so multi-word values (e.g. "General Retail") are preserved.
-    # Slack sends the full string; Bolt’s command["text"] can sometimes expose only the first token.
-    search_text = (getattr(g, "slash_command_raw_text", None) or command.get("text") or "").strip()
 
-    if not search_text:
-        respond("""Please provide search criteria. 
+def _run_lead_search_background(search_text: str, command_payload: dict) -> None:
+    """Runs in a background thread: parse, validate, then process_lead_search. Post errors to response_url."""
+    response_url = (command_payload or {}).get("response_url")
+    try:
+        parsed_input = parse_natural_language_input(search_text)
+        is_valid, error_message = validate_slack_command(parsed_input)
+        if not is_valid:
+            logger.warning("Invalid command received: %s", error_message)
+            _post_to_response_url(response_url, error_message)
+            return
+        logger.info("Slash command (background). Parsed input: %s", parsed_input)
+        trigger_data = {
+            "type": "slash_command",
+            "parsed_input": parsed_input,
+            "slack_user_id": (command_payload or {}).get("user_id"),
+            "slack_channel_id": (command_payload or {}).get("channel_id"),
+            "slack_trigger_id": (command_payload or {}).get("trigger_id"),
+            "raw_text": search_text,
+        }
+        trigger_queue.append(trigger_data)
+        from main import process_lead_search
+        process_lead_search(trigger_data)
+    except Exception as e:
+        logger.error("Error processing lead search: %s", e, exc_info=True)
+        _post_to_response_url(response_url, f"Error processing lead search: {e}")
+
+
+
+_LEAD_MAGNET_HELP = """Please provide search criteria.
 
 **New Format:**
 `/lead-magnet industry=SaaS,Fintech | location=California | seniority=Founder,C-Suite | verified-email=true | size>50`
@@ -58,7 +81,7 @@ def handle_slash_command(ack, respond, command):
   - Note: Automatically converted to `company_keywords` for Prospeo API
   - Use `keywords=` NOT `company_keywords=`
 - `industry=` - Company industries (comma-separated) - **Must match Prospeo exactly**
-  - ❌ \"General\" is invalid → ✅ use \"General Retail\"
+  - "General" is invalid -> use "General Retail"
   - All allowed values: https://prospeo.io/api-docs/enum/industries
   - Case-sensitive; use the exact spelling from that list
 - `location=` - Locations (comma-separated) - Recommended
@@ -72,53 +95,42 @@ def handle_slash_command(ack, respond, command):
 **Example:**
 `/lead-magnet keywords=golf pro shops | industry=General Retail | seniority=Founder,C-Suite | our-company-details="We sell premium golf equipment"`
 
-**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed).""")
-        return
-    
-    # Parse the input
-    parsed_input = parse_natural_language_input(search_text)
-    
-    # Validate the command (industry and seniority values)
-    is_valid, error_message = validate_slack_command(parsed_input)
-    
-    if not is_valid:
-        respond(error_message)
-        logger.warning(f"Invalid command received: {error_message}")
-        return
-    
-    logger.info(f"Slash command received. Parsed input: {parsed_input}")
-    print(f"=== LAYER 1 TEST: Parsed Input ===")
-    print(f"Search Criteria: {parsed_input}")
-    print(f"Target Companies: {parsed_input.get('target_companies', [])}")
-    print(f"Qualification Criteria: {parsed_input.get('qualification_criteria', {})}")
-    print("=" * 50)
-    
-    # Add metadata
-    trigger_data = {
-        'type': 'slash_command',
-        'parsed_input': parsed_input,
-        'slack_user_id': command.get('user_id'),
-        'slack_channel_id': command.get('channel_id'),
-        'slack_trigger_id': command.get('trigger_id'),
-        'raw_text': search_text
-    }
-    
-    # Add to queue for processing
-    trigger_queue.append(trigger_data)
-    
-    # Respond to user immediately so Slack gets a response within 3 seconds (avoids dispatch_failed)
-    respond(f"✅ Lead search initiated! Processing leads in the background. Results will be saved to Supabase.")
+**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed)."""
 
-    # Run the long-running search in a background thread so we return quickly to Slack
-    def run_lead_search():
+@app.command("/lead-magnet")
+def handle_slash_command(ack, respond, command):
+    """
+    Handle Slack slash command: /lead-magnet <criteria>.
+    Must return (and thus send HTTP 200) within 3 seconds to avoid operation_timeout.
+    """
+    search_text = (getattr(g, "slash_command_raw_text", None) or command.get("text") or "").strip()
+
+    if not search_text:
         try:
-            from main import process_lead_search
-            process_lead_search(trigger_data)
+            ack(_LEAD_MAGNET_HELP)
         except Exception as e:
-            logger.error(f"Error processing lead search: {e}", exc_info=True)
+            logger.error("ack() failed: %s", e, exc_info=True)
+        return
 
-    thread = threading.Thread(target=run_lead_search, daemon=True)
-    thread.start()
+    try:
+        ack("Lead search initiated. Processing in the background. Results will be saved to Supabase.")
+    except Exception as e:
+        logger.error("ack() failed: %s", e, exc_info=True)
+        return
+
+    payload = {
+        "response_url": command.get("response_url"),
+        "user_id": command.get("user_id"),
+        "channel_id": command.get("channel_id"),
+        "trigger_id": command.get("trigger_id"),
+    }
+    threading.Thread(
+        target=_run_lead_search_background,
+        args=(search_text, payload),
+        daemon=True,
+    ).start()
+
+
 
 
 @app.event("message")
