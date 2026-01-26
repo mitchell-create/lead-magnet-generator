@@ -5,10 +5,13 @@ and extracts search criteria and qualification rules.
 
 Force rebuild to install new dependencies.
 """
+import hashlib
+import hmac
 import logging
 import os
 import sys
 import threading
+import time
 from io import BytesIO
 from urllib.parse import parse_qs
 from flask import Flask, request, jsonify, g
@@ -31,6 +34,50 @@ flask_app = Flask(__name__)
 
 # Store parsed triggers (in production, use a queue like Redis or database)
 trigger_queue = []
+
+_LEAD_MAGNET_HELP = """Please provide search criteria.
+
+**New Format:**
+`/lead-magnet industry=SaaS,Fintech | location=California | seniority=Founder,C-Suite | verified-email=true | size>50`
+
+**Available Filters:**
+- `keywords=` - **REQUIRED** - Keywords for company/product matching (comma-separated)
+  - Note: Automatically converted to `company_keywords` for Prospeo API
+  - Use `keywords=` NOT `company_keywords=`
+- `industry=` - Company industries (comma-separated) - **Must match Prospeo exactly**
+  - "General" is invalid -> use "General Retail"
+  - All allowed values: https://prospeo.io/api-docs/enum/industries
+  - Case-sensitive; use the exact spelling from that list
+- `location=` - Locations (comma-separated) - Recommended
+- `seniority=` - Seniority levels (comma-separated) - Recommended
+  - Valid values: Founder/Owner, C-Suite, Partner, Vice President, Head, Director, Manager, Senior, Intern, Entry
+- `our-company-details=` - Your company description for AI context - Recommended
+
+**Template:**
+`/lead-magnet keywords={{keywords}} | industry={{industry}} | location={{location}} | seniority={{seniority}} | our-company-details="{{our-company-details}}"`
+
+**Example:**
+`/lead-magnet keywords=golf pro shops | industry=General Retail | seniority=Founder,C-Suite | our-company-details="We sell premium golf equipment"`
+
+**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed)."""
+
+
+def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
+    """Verify Slack request using X-Slack-Signature and X-Slack-Request-Timestamp."""
+    if not body or not timestamp or not signature or not getattr(config, "SLACK_SIGNING_SECRET", None):
+        return False
+    try:
+        if abs(time.time() - int(timestamp)) > 60 * 5:
+            return False
+        sig_basestring = f"v0:{timestamp}:{body.decode('utf-8', errors='replace')}"
+        my_sig = "v0=" + hmac.new(
+            config.SLACK_SIGNING_SECRET.encode("utf-8"),
+            sig_basestring.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(my_sig, signature)
+    except Exception:
+        return False
 
 
 def _post_to_response_url(response_url: str, text: str) -> None:
@@ -70,8 +117,24 @@ def _run_lead_search_background(search_text: str, command_payload: dict) -> None
         _post_to_response_url(response_url, f"Error processing lead search: {e}")
 
 
+@app.command("/lead-magnet")
+def handle_slash_command(ack, respond, command):
+    """
+    Handle Slack slash command: /lead-magnet <criteria>
+    """
+    try:
+        ack()  # Acknowledge the command immediately so Slack gets 200 within 3s
+    except Exception as e:
+        logger.error(f"ack() failed: {e}", exc_info=True)
+        return
 
-_LEAD_MAGNET_HELP = """Please provide search criteria.
+    # Use text from raw POST body when set in slack_commands() so multi-word values (e.g. "General Retail") are preserved.
+    # Slack sends the full string; Bolt’s command["text"] can sometimes expose only the first token.
+    # Do not use Flask g here: Bolt may run this in a thread without app context.
+    search_text = (command.get("text") or "").strip()
+
+    if not search_text:
+        respond("""Please provide search criteria. 
 
 **New Format:**
 `/lead-magnet industry=SaaS,Fintech | location=California | seniority=Founder,C-Suite | verified-email=true | size>50`
@@ -81,7 +144,7 @@ _LEAD_MAGNET_HELP = """Please provide search criteria.
   - Note: Automatically converted to `company_keywords` for Prospeo API
   - Use `keywords=` NOT `company_keywords=`
 - `industry=` - Company industries (comma-separated) - **Must match Prospeo exactly**
-  - "General" is invalid -> use "General Retail"
+  - ❌ \"General\" is invalid → ✅ use \"General Retail\"
   - All allowed values: https://prospeo.io/api-docs/enum/industries
   - Case-sensitive; use the exact spelling from that list
 - `location=` - Locations (comma-separated) - Recommended
@@ -95,42 +158,53 @@ _LEAD_MAGNET_HELP = """Please provide search criteria.
 **Example:**
 `/lead-magnet keywords=golf pro shops | industry=General Retail | seniority=Founder,C-Suite | our-company-details="We sell premium golf equipment"`
 
-**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed)."""
-
-@app.command("/lead-magnet")
-def handle_slash_command(ack, respond, command):
-    """
-    Handle Slack slash command: /lead-magnet <criteria>.
-    Must return (and thus send HTTP 200) within 3 seconds to avoid operation_timeout.
-    """
-    search_text = (getattr(g, "slash_command_raw_text", None) or command.get("text") or "").strip()
-
-    if not search_text:
-        try:
-            ack(_LEAD_MAGNET_HELP)
-        except Exception as e:
-            logger.error("ack() failed: %s", e, exc_info=True)
+**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed).""")
         return
-
-    try:
-        ack("Lead search initiated. Processing in the background. Results will be saved to Supabase.")
-    except Exception as e:
-        logger.error("ack() failed: %s", e, exc_info=True)
+    
+    # Parse the input
+    parsed_input = parse_natural_language_input(search_text)
+    
+    # Validate the command (industry and seniority values)
+    is_valid, error_message = validate_slack_command(parsed_input)
+    
+    if not is_valid:
+        respond(error_message)
+        logger.warning(f"Invalid command received: {error_message}")
         return
-
-    payload = {
-        "response_url": command.get("response_url"),
-        "user_id": command.get("user_id"),
-        "channel_id": command.get("channel_id"),
-        "trigger_id": command.get("trigger_id"),
+    
+    logger.info(f"Slash command received. Parsed input: {parsed_input}")
+    print(f"=== LAYER 1 TEST: Parsed Input ===")
+    print(f"Search Criteria: {parsed_input}")
+    print(f"Target Companies: {parsed_input.get('target_companies', [])}")
+    print(f"Qualification Criteria: {parsed_input.get('qualification_criteria', {})}")
+    print("=" * 50)
+    
+    # Add metadata
+    trigger_data = {
+        'type': 'slash_command',
+        'parsed_input': parsed_input,
+        'slack_user_id': command.get('user_id'),
+        'slack_channel_id': command.get('channel_id'),
+        'slack_trigger_id': command.get('trigger_id'),
+        'raw_text': search_text
     }
-    threading.Thread(
-        target=_run_lead_search_background,
-        args=(search_text, payload),
-        daemon=True,
-    ).start()
+    
+    # Add to queue for processing
+    trigger_queue.append(trigger_data)
+    
+    # Respond to user immediately so Slack gets a response within 3 seconds (avoids dispatch_failed)
+    respond(f"✅ Lead search initiated! Processing leads in the background. Results will be saved to Supabase.")
 
+    # Run the long-running search in a background thread so we return quickly to Slack
+    def run_lead_search():
+        try:
+            from main import process_lead_search
+            process_lead_search(trigger_data)
+        except Exception as e:
+            logger.error(f"Error processing lead search: {e}", exc_info=True)
 
+    thread = threading.Thread(target=run_lead_search, daemon=True)
+    thread.start()
 
 
 @app.event("message")
@@ -229,22 +303,52 @@ def slack_events():
 
 @flask_app.route("/slack/commands", methods=["POST"])
 def slack_commands():
-    """Handle Slack Slash Commands."""
-    # Parse raw body for "text" before Bolt runs, so multi-word values (e.g. "General Retail") are preserved.
-    # Slack sends application/x-www-form-urlencoded; some stacks truncate at space when parsing.
+    """
+    Handle Slack Slash Commands. Returns HTTP 200 immediately to avoid dispatch_failed.
+    Bypasses Bolt for this route so no framework latency; verifies signature and responds in-process.
+    """
+    logger.info("[/slack/commands] fast path")
+    raw = request.get_data(as_text=False)
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+    if not _verify_slack_signature(raw, timestamp, signature):
+        return "", 403
+
+    if not raw:
+        return jsonify({"text": _LEAD_MAGNET_HELP}), 200
+
     try:
-        raw = request.get_data(as_text=False)
-        if raw:
-            params = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
-            raw_text = (params.get("text") or [""])[0]
-            g.slash_command_raw_text = (raw_text or "").strip()
-            request.environ["wsgi.input"] = BytesIO(raw)
-        else:
-            g.slash_command_raw_text = None
+        params = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
     except Exception as e:
-        logger.warning("Could not parse slash command body for raw text: %s", e)
-        g.slash_command_raw_text = None
-    return handler.handle(request)
+        logger.warning("Could not parse slash command body: %s", e)
+        return jsonify({"text": "Unable to parse request."}), 200
+
+    text = (params.get("text") or [""])[0].strip()
+    response_url = (params.get("response_url") or [""])[0]
+    user_id = (params.get("user_id") or [""])[0]
+    channel_id = (params.get("channel_id") or [""])[0]
+    trigger_id = (params.get("trigger_id") or [""])[0]
+
+    if not text:
+        return jsonify({"text": _LEAD_MAGNET_HELP}), 200
+
+    payload = {
+        "response_url": response_url,
+        "user_id": user_id,
+        "channel_id": channel_id,
+        "trigger_id": trigger_id,
+    }
+    threading.Thread(
+        target=_run_lead_search_background,
+        args=(text, payload),
+        daemon=True,
+    ).start()
+    return (
+        jsonify({
+            "text": "Lead search initiated. Processing in the background. Results will be saved to Supabase."
+        }),
+        200,
+    )
 
 
 @flask_app.route("/health", methods=["GET"])
