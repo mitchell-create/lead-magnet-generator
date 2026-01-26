@@ -8,10 +8,12 @@ Force rebuild to install new dependencies.
 import logging
 import os
 import sys
+import threading
 from flask import Flask, request, jsonify
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from utils import parse_natural_language_input
+from validators import validate_slack_command
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -45,18 +47,37 @@ def handle_slash_command(ack, respond, command):
 `/lead-magnet industry=SaaS,Fintech | location=California | seniority=Founder,C-Suite | verified-email=true | size>50`
 
 **Available Filters:**
-- `industry=` - Company industries (comma-separated)
-- `location=` - Locations (comma-separated)  
-- `seniority=` - Seniority levels (comma-separated)
-- `keywords=` - Keywords (comma-separated)
-- `verified-email=` - true/false
+- `keywords=` - **REQUIRED** - Keywords for company/product matching (comma-separated)
+  - Note: Automatically converted to `company_keywords` for Prospeo API
+  - Use `keywords=` NOT `company_keywords=`
+- `industry=` - Company industries (comma-separated) - **Must match Prospeo exactly**
+  - ❌ \"General\" is invalid → ✅ use \"General Retail\"
+  - All allowed values: https://prospeo.io/api-docs/enum/industries
+  - Case-sensitive; use the exact spelling from that list
+- `location=` - Locations (comma-separated) - Recommended
+- `seniority=` - Seniority levels (comma-separated) - Recommended
+  - Valid values: Founder/Owner, C-Suite, Partner, Vice President, Head, Director, Manager, Senior, Intern, Entry
+- `our-company-details=` - Your company description for AI context - Recommended
+
+**Template:**
+`/lead-magnet keywords={{keywords}} | industry={{industry}} | location={{location}} | seniority={{seniority}} | our-company-details="{{our-company-details}}"`
 
 **Example:**
-`/lead-magnet keywords=golf pro shops | seniority=Founder | location=United States`""")
+`/lead-magnet keywords=golf pro shops | industry=General Retail | seniority=Founder,C-Suite | our-company-details="We sell premium golf equipment"`
+
+**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed)."""")
         return
     
     # Parse the input
     parsed_input = parse_natural_language_input(search_text)
+    
+    # Validate the command (industry and seniority values)
+    is_valid, error_message = validate_slack_command(parsed_input)
+    
+    if not is_valid:
+        respond(error_message)
+        logger.warning(f"Invalid command received: {error_message}")
+        return
     
     logger.info(f"Slash command received. Parsed input: {parsed_input}")
     print(f"=== LAYER 1 TEST: Parsed Input ===")
@@ -78,16 +99,19 @@ def handle_slash_command(ack, respond, command):
     # Add to queue for processing
     trigger_queue.append(trigger_data)
     
-    # Respond to user
-    respond(f"✅ Lead search initiated! Processing leads based on: {search_text}")
-    
-    # Trigger processing (in production, this would be async)
-    try:
-        from main import process_lead_search
-        process_lead_search(trigger_data)
-    except Exception as e:
-        logger.error(f"Error processing lead search: {e}")
-        respond(f"❌ Error processing leads: {str(e)}")
+    # Respond to user immediately so Slack gets a response within 3 seconds (avoids dispatch_failed)
+    respond(f"✅ Lead search initiated! Processing leads in the background. Results will be saved to Supabase.")
+
+    # Run the long-running search in a background thread so we return quickly to Slack
+    def run_lead_search():
+        try:
+            from main import process_lead_search
+            process_lead_search(trigger_data)
+        except Exception as e:
+            logger.error(f"Error processing lead search: {e}", exc_info=True)
+
+    thread = threading.Thread(target=run_lead_search, daemon=True)
+    thread.start()
 
 
 @app.event("message")
@@ -117,6 +141,14 @@ def handle_message_events(event, say):
     # Parse the input
     parsed_input = parse_natural_language_input(message_text)
     
+    # Validate the command (industry and seniority values)
+    is_valid, error_message = validate_slack_command(parsed_input)
+    
+    if not is_valid:
+        say(error_message)
+        logger.warning(f"Invalid command received: {error_message}")
+        return
+    
     logger.info(f"Message event received. Parsed input: {parsed_input}")
     print(f"=== LAYER 1 TEST: Message Event ===")
     print(f"Search Criteria: {parsed_input}")
@@ -145,8 +177,29 @@ def handle_message_events(event, say):
         from main import process_lead_search
         process_lead_search(trigger_data)
     except Exception as e:
-        logger.error(f"Error processing lead search: {e}")
-        say(f"❌ Error processing leads: {str(e)}")
+        logger.error(f"Error processing lead search: {e}", exc_info=True)
+        
+        # Check if it's a Prospeo API error with user-friendly message
+        error_str = str(e)
+        if "filter_error" in error_str or "INVALID_FILTERS" in error_str:
+            # Try to extract Prospeo's error message
+            if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                try:
+                    error_detail = e.response.json()
+                    if error_detail.get('filter_error'):
+                        say(
+                            f"❌ **Prospeo API Error:** {error_detail.get('filter_error')}\n\n"
+                            f"**How to fix:**\n"
+                            f"• Check the exact filter values in Prospeo dashboard\n"
+                            f"• Use the 'API JSON' builder in dashboard to see exact enum values\n"
+                            f"• Industry values are case-sensitive and must match exactly"
+                        )
+                        return
+                except:
+                    pass
+        
+        # Generic error message
+        say(f"❌ Error processing leads: {str(e)}\n\nIf this is a filter error, check Prospeo dashboard 'API JSON' builder for exact values.")
 
 
 @flask_app.route("/slack/events", methods=["POST"])
@@ -169,18 +222,11 @@ def health_check():
 
 def run_server():
     """Run the Flask server to listen for Slack events."""
-    # Railway sets PORT environment variable, but we want to use SLACK_PORT (3000)
-    # Prefer SLACK_PORT since that's what Railway networking is configured for
-    railway_port = os.getenv('PORT')
-    slack_port = config.SLACK_PORT
+    # Railway injects PORT and routes traffic to it; we must listen on that port.
+    # Locally, fall back to SLACK_PORT (3000) when PORT is unset.
+    port = int(os.getenv('PORT', config.SLACK_PORT))
     
-    logger.info(f"PORT env var: {railway_port}")
-    logger.info(f"SLACK_PORT config: {slack_port}")
-    
-    # Use SLACK_PORT (3000) - this matches Railway networking config
-    port = slack_port
-    
-    logger.info(f"Using port: {port}")
+    logger.info(f"PORT env: {os.getenv('PORT')} -> using port {port}")
     logger.info(f"Starting Slack listener on port {port}")
     # Force Railway rebuild - break cache for dependency installation
     # Bind to 0.0.0.0 to be accessible from outside container

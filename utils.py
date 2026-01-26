@@ -3,502 +3,593 @@ Utility functions for parsing, formatting, and helper operations.
 """
 import re
 import json
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List, Any
 
 
-def parse_natural_language_input(text: str) -> Dict[str, any]:
+def parse_natural_language_input(text: str) -> Dict:
     """
-    Parse Slack input to extract Prospeo search filters and AI qualification criteria.
+    Parse natural language input from Slack command.
+    Extracts filters like keywords, industry, location, seniority, etc.
     
-    New Format:
-    - "industry=SaaS,Fintech | location=California | seniority=Founder | verified-email=true | size>50"
-    - "keywords=golf pro shops | seniority=C-Suite,VP | location=United States"
-    
-    Legacy Format (still supported):
-    - "Target: Company1, Company2 | Criteria: Industry=SaaS, Size>50"
+    Args:
+        text: Raw text from Slack command
     
     Returns:
-        dict with keys: 'prospeo_filters', 'qualification_criteria', 'raw_text'
+        Dictionary with parsed filters and metadata
     """
     result = {
-        'prospeo_filters': {},
-        'qualification_criteria': {},
-        'raw_text': text,
-        # Legacy fields for backwards compatibility
         'target_companies': [],
-        'search_keywords': []
+        'qualification_criteria': {},
+        'search_keywords': [],
+        'prospeo_filters': {}
     }
     
-    # Split by | to separate Prospeo filters from AI qualification
-    parts = text.split('|')
-    prospeo_part = parts[0].strip() if len(parts) > 0 else text.strip()
-    qualification_part = parts[1].strip() if len(parts) > 1 else ""
+    if not text:
+        return result
     
-    # Parse Prospeo filters (left side of |)
-    if prospeo_part:
-        result['prospeo_filters'] = parse_prospeo_filters(prospeo_part)
+    # Split by | or space for filter separation
+    filters = re.split(r'\||\s+', text)
     
-    # Parse AI qualification criteria (right side of |)
-    if qualification_part:
-        result['qualification_criteria'] = parse_criteria_string(qualification_part)
-    
-    # Legacy parsing for backwards compatibility
-    # Check if it's legacy format first
-    if 'target:' in text.lower() or 'criteria:' in text.lower():
-        return parse_legacy_format(text)
-    
-    # Extract keywords for legacy compatibility
-    if 'keywords' in result['prospeo_filters']:
-        result['search_keywords'] = result['prospeo_filters']['keywords']
-    
-    return result
-
-
-def parse_prospeo_filters(filter_text: str) -> Dict[str, any]:
-    """
-    Parse Prospeo filter string into dictionary.
-    
-    Format: filter_name=value1,value2 | filter_name=value
-    Examples:
-    - "industry=SaaS,Fintech"
-    - "location=California,New York | seniority=Founder,C-Suite"
-    - "keywords=golf pro shops | verified-email=true"
-    
-    Returns:
-        Dictionary of Prospeo filters
-    """
-    filters = {}
-    
-    # Split by spaces (filters are space-separated, values are comma-separated)
-    # Handle quoted values that might contain spaces
-    parts = []
-    current_part = ""
-    in_quotes = False
-    
-    for char in filter_text:
-        if char == '"':
-            in_quotes = not in_quotes
-            current_part += char
-        elif char == ' ' and not in_quotes:
-            if current_part.strip():
-                parts.append(current_part.strip())
-            current_part = ""
-        else:
-            current_part += char
-    
-    if current_part.strip():
-        parts.append(current_part.strip())
-    
-    # Parse each filter
-    for part in parts:
-        if '=' in part:
-            key, value = part.split('=', 1)
+    for filter_part in filters:
+        filter_part = filter_part.strip()
+        if not filter_part:
+            continue
+        
+        # Parse key=value pairs
+        if '=' in filter_part:
+            key, value = filter_part.split('=', 1)
             key = key.strip().lower()
             value = value.strip().strip('"').strip("'")
             
-            # Map Slack filter names to Prospeo API names
-            prospeo_key = map_filter_name_to_prospeo(key)
-            
-            # Parse value (handle comma-separated lists and booleans)
-            if prospeo_key == 'only_verified_email':
-                # Boolean filter
-                filters[prospeo_key] = value.lower() in ['true', '1', 'yes', 'on']
-            elif ',' in value:
-                # Multiple values (comma-separated)
-                filters[prospeo_key] = [v.strip() for v in value.split(',')]
+            # Handle comma-separated values
+            if ',' in value:
+                values = [v.strip() for v in value.split(',')]
             else:
-                # Single value (convert to list for consistency)
-                filters[prospeo_key] = [value] if value else []
-    
-    return filters
-
-
-def map_filter_name_to_prospeo(slack_filter_name: str) -> str:
-    """
-    Map Slack filter names to Prospeo API filter names.
-    
-    Slack Name -> Prospeo API Name
-    """
-    mapping = {
-        'industry': 'company_industry',
-        'company_industry': 'company_industry',
-        'location': 'company_location',  # Default to company_location, could be person_location
-        'company_location': 'company_location',
-        'person_location': 'person_location',
-        'seniority': 'person_seniority',
-        'person_seniority': 'person_seniority',
-        'keywords': 'keywords',
-        'verified-email': 'only_verified_email',
-        'verified_email': 'only_verified_email',
-        'only_verified_email': 'only_verified_email',
-    }
-    return mapping.get(slack_filter_name, slack_filter_name)
-
-
-def parse_legacy_format(text: str) -> Dict[str, any]:
-    """
-    Parse legacy format for backwards compatibility.
-    
-    Formats:
-    - "Target: Company1, Company2 | Criteria: Industry=SaaS, Size>50"
-    - "Find leads: SaaS companies with >50 employees"
-    """
-    result = {
-        'target_companies': [],
-        'search_keywords': [],
-        'qualification_criteria': {},
-        'prospeo_filters': {},
-        'raw_text': text
-    }
-    
-    # Pattern 1: Structured format with "Target:" and "Criteria:"
-    if '|' in text:
-        parts = text.split('|')
-        for part in parts:
-            part = part.strip()
-            if part.lower().startswith('target:'):
-                targets = part[7:].strip()
-                result['target_companies'] = [t.strip() for t in targets.split(',')]
-            elif part.lower().startswith('criteria:') or part.lower().startswith('good fit:'):
-                criteria_text = part.split(':', 1)[1].strip()
-                result['qualification_criteria'] = parse_criteria_string(criteria_text)
-    
-    # Pattern 2: Look for LinkedIn URLs
-    linkedin_url_pattern = r'linkedin\.com/company/([^/\s]+)'
-    linkedin_matches = re.findall(linkedin_url_pattern, text, re.IGNORECASE)
-    if linkedin_matches:
-        result['target_companies'].extend(linkedin_matches)
-    
-    # Pattern 3: Extract keywords (industry mentions, etc.)
-    industry_keywords = ['SaaS', 'B2B', 'fintech', 'ecommerce', 'healthcare', 
-                        'technology', 'software', 'tech']
-    found_keywords = [kw for kw in industry_keywords if kw.lower() in text.lower()]
-    result['search_keywords'] = found_keywords
-    
-    # Pattern 4: Extract size/employee criteria
-    size_pattern = r'(?:size|employees?)\s*(?:>|more than|at least)\s*(\d+)'
-    size_match = re.search(size_pattern, text, re.IGNORECASE)
-    if size_match:
-        result['qualification_criteria']['min_employees'] = int(size_match.group(1))
-    
-    # Pattern 5: Extract industry criteria
-    industry_pattern = r'industry\s*=\s*([^,\s|]+)'
-    industry_match = re.search(industry_pattern, text, re.IGNORECASE)
-    if industry_match:
-        result['qualification_criteria']['industry'] = industry_match.group(1)
-        result['prospeo_filters']['company_industry'] = [industry_match.group(1)]
-    
-    # Convert legacy to new format
-    if result['target_companies']:
-        result['prospeo_filters']['keywords'] = result['target_companies']
-    if result['search_keywords']:
-        if 'keywords' in result['prospeo_filters']:
-            result['prospeo_filters']['keywords'].extend(result['search_keywords'])
-        else:
-            result['prospeo_filters']['keywords'] = result['search_keywords']
+                values = [value]
+            
+            # Map to Prospeo filter names and internal structure
+            if key == 'keywords':
+                result['target_companies'] = values
+                result['search_keywords'] = values
+                result['prospeo_filters']['company_keywords'] = ', '.join(values)  # Convert to string for Prospeo
+            elif key == 'industry':
+                result['prospeo_filters']['company_industry'] = values
+            elif key == 'location':
+                result['prospeo_filters']['company_location'] = values
+            elif key == 'seniority':
+                result['prospeo_filters']['person_seniority'] = values
+            elif key == 'our-company-details':
+                result['qualification_criteria']['our_company_details'] = value
     
     return result
 
 
-def parse_criteria_string(criteria_text: str) -> Dict[str, any]:
+def build_prospeo_filters(parsed_input: Dict, include_seniority: bool = False) -> Dict:
     """
-    Parse criteria string into structured dictionary.
+    Build Prospeo API filter dictionary from parsed input.
     
-    Examples:
-    - "Industry=SaaS, Size>50" -> {'industry': 'SaaS', 'min_employees': 50}
-    - "Revenue>$1M, Location=USA" -> {'min_revenue': 1000000, 'location': 'USA'}
-    """
-    criteria = {}
+    Args:
+        parsed_input: Parsed input from parse_natural_language_input
+        include_seniority: Whether to include person_seniority in filters (only for person search, not company search)
     
-    # Split by comma
-    parts = [p.strip() for p in criteria_text.split(',')]
-    
-    for part in parts:
-        if '=' in part:
-            key, value = part.split('=', 1)
-            key = key.strip().lower()
-            value = value.strip()
-            criteria[key] = value
-        elif '>' in part:
-            match = re.match(r'(\w+)\s*>\s*(.+)', part)
-            if match:
-                key = match.group(1).lower()
-                value_str = match.group(2).strip()
-                # Try to parse as number
-                value = parse_number_with_suffix(value_str)
-                if value is not None:
-                    criteria[f'min_{key}'] = value
-                else:
-                    criteria[f'min_{key}'] = value_str
-    
-    return criteria
-
-
-def parse_number_with_suffix(text: str) -> Optional[int]:
-    """Parse numbers with suffixes like '50', '1M', '500K', etc."""
-    text = text.strip().upper()
-    
-    # Remove currency symbols and spaces
-    text = text.replace('$', '').replace(',', '').strip()
-    
-    multipliers = {
-        'K': 1000,
-        'M': 1000000,
-        'B': 1000000000
-    }
-    
-    for suffix, multiplier in multipliers.items():
-        if text.endswith(suffix):
-            try:
-                number = float(text[:-1])
-                return int(number * multiplier)
-            except ValueError:
-                return None
-    
-    try:
-        return int(float(text))
-    except ValueError:
-        return None
-
-
-def build_prospeo_filters(parsed_input: Dict) -> Dict:
-    """
-    Convert parsed input to Prospeo API filter format.
-    
-    Supports:
-    - company_industry (list)
-    - company_location (list)
-    - person_location (list)
-    - person_seniority (list)
-    - keywords (list)
-    - only_verified_email (boolean)
-    
-    Returns filters dictionary ready for Prospeo API.
-    Format: {"filter_name": {"include": [...]}} or {"filter_name": true/false}
+    Returns:
+        Dictionary with Prospeo filter structure
     """
     filters = {}
-    
-    # Get prospeo_filters from parsed input (new format)
     prospeo_filters = parsed_input.get('prospeo_filters', {})
     
-    # Handle company_industry
+    # Never send "keywords" to Prospeo; only company_keywords for /search-company.
+    # If something put "keywords" in prospeo_filters, treat it as company_keywords.
+    if 'keywords' in prospeo_filters and 'company_keywords' not in prospeo_filters:
+        kw = prospeo_filters['keywords']
+        prospeo_filters = dict(prospeo_filters)
+        prospeo_filters['company_keywords'] = kw if isinstance(kw, str) else ', '.join(kw) if isinstance(kw, (list, tuple)) else str(kw)
+        del prospeo_filters['keywords']
+    
+    # Company-level filters (for /search-company)
     if 'company_industry' in prospeo_filters:
-        industries = prospeo_filters['company_industry']
-        if isinstance(industries, list) and industries:
-            filters['company_industry'] = {"include": industries}
-        elif isinstance(industries, str):
-            filters['company_industry'] = {"include": [industries]}
+        filters['company_industry'] = {
+            'include': prospeo_filters['company_industry'] if isinstance(prospeo_filters['company_industry'], list) else [prospeo_filters['company_industry']]
+        }
     
-    # Handle company_location
-    if 'company_location' in prospeo_filters:
-        locations = prospeo_filters['company_location']
-        if isinstance(locations, list) and locations:
-            filters['company_location'] = {"include": locations}
-        elif isinstance(locations, str):
-            filters['company_location'] = {"include": [locations]}
+    # Company location filter (DISABLED - requires exact values from Prospeo dashboard)
+    # 
+    # STATUS: Currently disabled because exact location format values are not available.
+    # Prospeo requires exact location strings that match their internal format.
+    # 
+    # To enable location filtering in the future:
+    # 1. Log into Prospeo dashboard
+    # 2. Build a search with location filters
+    # 3. Click "API JSON" or "View API Request" to see the exact format
+    # 4. Copy the exact location values (e.g., "United States", "US", "California", etc.)
+    # 5. Uncomment the code below and use those exact values
+    # 
+    # Until then, location filtering is skipped to avoid API errors.
+    # Companies can still be filtered by location in post-processing if needed.
+    #
+    # if 'company_location' in prospeo_filters:
+    #     location_values = prospeo_filters['company_location']
+    #     if isinstance(location_values, list) and location_values:
+    #         # Only add if we have valid location values
+    #         # User should verify these match Prospeo dashboard exactly
+    #         filters['company_location'] = {
+    #             'include': location_values
+    #     elif location_values:  # Single string value
+    #         filters['company_location'] = {
+    #             'include': [location_values]
+    #         }
     
-    # Handle person_location
-    if 'person_location' in prospeo_filters:
-        locations = prospeo_filters['person_location']
-        if isinstance(locations, list) and locations:
-            filters['person_location'] = {"include": locations}
-        elif isinstance(locations, str):
-            filters['person_location'] = {"include": [locations]}
+    # Company keywords for /search-company (Prospeo supports this on company search)
+    # Per COMPANY_SEARCH_UPDATE.md, /search-company accepts company_keywords as a string.
+    # If the API returns INVALID_FILTERS for this field, we can fall back to AI-only keyword use.
+    if 'company_keywords' in prospeo_filters and prospeo_filters['company_keywords']:
+        kw = prospeo_filters['company_keywords']
+        filters['company_keywords'] = (
+            kw if isinstance(kw, str) else ', '.join(kw) if isinstance(kw, (list, tuple)) else str(kw)
+        )
     
-    # Handle person_seniority
-    if 'person_seniority' in prospeo_filters:
-        seniorities = prospeo_filters['person_seniority']
-        if isinstance(seniorities, list) and seniorities:
-            filters['person_seniority'] = {"include": seniorities}
-        elif isinstance(seniorities, str):
-            filters['person_seniority'] = {"include": [seniorities]}
-    
-    # Handle keywords - Prospeo expects string or comma-separated string, not list
-    if 'keywords' in prospeo_filters:
-        keywords = prospeo_filters['keywords']
-        if isinstance(keywords, list) and keywords:
-            # Convert list to comma-separated string (Prospeo format)
-            filters['keywords'] = ", ".join(keywords)
-        elif isinstance(keywords, str):
-            filters['keywords'] = keywords
-    else:
-        # Legacy support: check for search_keywords or target_companies
-        keywords = []
-        if parsed_input.get('search_keywords'):
-            keywords.extend(parsed_input['search_keywords'])
-        if parsed_input.get('target_companies'):
-            # Convert target companies to keywords
-            for company in parsed_input['target_companies']:
-                cleaned = company.lower().replace('companies', '').replace('company', '').strip()
-                if cleaned:
-                    keywords.append(cleaned)
-        if keywords:
-            # Remove duplicates
-            unique_keywords = []
-            seen = set()
-            for kw in keywords:
-                if kw.lower() not in seen:
-                    unique_keywords.append(kw)
-                    seen.add(kw.lower())
-            # Convert to comma-separated string (Prospeo format)
-            filters['keywords'] = ", ".join(unique_keywords)
-    
-    # Handle only_verified_email (boolean)
-    if 'only_verified_email' in prospeo_filters:
-        filters['only_verified_email'] = prospeo_filters['only_verified_email']
-    
-    # Legacy support: map industry from qualification_criteria
-    qual_criteria = parsed_input.get('qualification_criteria', {})
-    if 'industry' in qual_criteria and 'company_industry' not in filters:
-        industry = qual_criteria['industry']
-        filters['company_industry'] = {"include": [industry]}
-    
-    # If no filters at all, add default keywords to avoid 400 error
-    if not filters:
-        filters['keywords'] = ["software"]
+    # Person-level filters (only if include_seniority is True, for /search-person)
+    if include_seniority and 'person_seniority' in prospeo_filters:
+        filters['person_seniority'] = {
+            'include': prospeo_filters['person_seniority'] if isinstance(prospeo_filters['person_seniority'], list) else [prospeo_filters['person_seniority']]
+        }
     
     return filters
 
 
-def format_qualification_template(
-    person_data: Dict,
+def format_wholesale_partner_prompt(
     company_data: Dict,
-    target_companies: list,
-    qualification_criteria: Dict,
     scraped_content: Optional[str] = None
 ) -> str:
     """
-    Format the wholesale partner qualification prompt template with dynamic data.
+    Format the wholesale partner check prompt (Check #1).
+    Focuses ONLY on whether company is a multi-brand retailer/reseller.
     
     Args:
-        person_data: Person information from Prospeo
-        company_data: Company information from Prospeo
-        target_companies: List of target company names/industries
-        qualification_criteria: Dictionary of qualification criteria
+        company_data: Company information dictionary
+        scraped_content: Scraped website content (optional)
     
     Returns:
-        Formatted prompt string for wholesale partner qualification
+        Formatted prompt string for wholesale partner check
     """
-    # Get company website and LinkedIn from Prospeo data
     company_website = company_data.get('website') or company_data.get('domain') or 'N/A'
-    # Try to get LinkedIn from person data or company data
-    company_linkedin = person_data.get('linkedin_url', '').replace('/in/', '/company/') if person_data.get('linkedin_url') else company_data.get('linkedin_url', 'N/A')
     
-    # If website is a domain, prepend https://
     if company_website and company_website != 'N/A' and not company_website.startswith('http'):
         company_website = f"https://{company_website}"
     
-    # Build the comprehensive wholesale partner qualification prompt
-    template = f"""Determine if this company is a RETAILER/RESELLER who carries multiple brands (and could stock our products), or if they only sell their own products. 
+    prompt = f"""Determine if this company is a MULTI-BRAND RETAILER/RESELLER (wholesale partner type).
 
-GOOD FIT = Multi-brand retailers who resell other companies' products 
+MULTI-BRAND RETAILER/RESELLER = A company that sells products from multiple brands/manufacturers to end customers (B2C or B2B2C).
 
-Why we want these companies: They stock and sell products from various brands, meaning they could potentially carry and resell OUR products in their store or catalog. 
+Why we want these companies: They already have distribution channels and can stock our products alongside other brands. They're ideal partners because they're set up to carry multiple product lines.
 
-Positive indicators to look for:
-- "Brands" (plural), "Companies We Carry," "Shop by Brand" in header/navigation/menu/footer WHY: This shows they organize their inventory by multiple brands they stock, not just their own
-- Brand filter dropdowns in product collections WHY: Filters allow customers to narrow down by brand, which only makes sense if they carry multiple brands
-- Product titles that lead with or end with brand names (e.g., "Stanley 2L Water Bottle" or "Water Bottle - Yeti") WHY: Including brand names in product titles indicates they're selling other companies' products and need to differentiate between brands
-- Multiple recognizable third-party brand names across different products WHY: Variety of brands proves they're a reseller, not just selling their own line
-- It's OK if they also sell some of their own branded products, as long as they primarily carry other brands WHY: Many retailers have a small house brand alongside the many brands they carry - this doesn't disqualify them
+Positive indicators:
+- Website shows multiple brands/products from different manufacturers
+- Product pages list various brands (e.g., "Shop by Brand", "Brands we carry")
+- Retail store, e-commerce site, or distributor that stocks multiple vendors
+- Categories/collections that include products from different manufacturers
+- "About" section mentions carrying multiple brands or being a retailer/reseller
 
-NOT A FIT = Companies who only sell their own brand or would compete with us 
+NOT a multi-brand retailer:
+- Manufacturer selling only their own products
+- Single-brand store (only one brand's products)
+- Service provider with no product retail component (unless they have a pro shop/retail section)
+- B2B manufacturer that doesn't resell products to end customers
 
-Why we want to avoid these companies: These are manufacturers/brands who only sell their own products. They wouldn't stock our products - they would compete with us or expect us to distribute THEIR products. 
+Respond with ONLY:
+VERDICT: YES (if multi-brand retailer/reseller) or NO (if not)
 
-Negative indicators to look for:
-- "Brand" (singular) section talking about their own company story WHY: Singular "brand" is usually an "About Us" page describing THEIR brand identity, not a catalog of brands they carry
-- "Dealers," "Dealer Sign Up," "Wholesale," "Become a Distributor/Seller," "Retail Partners" in menu/navigation/footer WHY: These pages are for recruiting OTHER stores to sell THEIR products, meaning they're the manufacturer/brand, not a retailer who would stock ours
-- "Where to Buy" or "Stockists" pages listing retail locations WHY: This shows where customers can buy THEIR products from other retailers - they're the brand being distributed, not the distributor
-- Product titles without brand names (just "2L Water Bottle" instead of "Stanley 2L Water Bottle") WHY: If all products lack brand prefixes, it's likely everything is their own brand (redundant to say "CompanyName 2L Water Bottle" on every product when it's all theirs)
-- FAQs reference only their own brand name (e.g., "How do I clean my [Company Name] products?") WHY: If FAQs only mention their brand, they don't carry other brands (otherwise FAQs would be generic or cover multiple brands)
-- Only sell brands within their own corporate umbrella/portfolio WHY: Some companies own multiple brands but don't stock outside products - they're still a closed system, not open to new suppliers
-- Focus on their own product development, innovation, or manufacturing WHY: Language about "our technology," "our designs," "we manufacture" indicates they're a brand/maker, not a reseller
+REASONING: [1-2 sentences explaining your verdict]
 
-EXAMPLES:
-
-Example 1 - GOOD FIT:
-Website: https://cranes-country-store.com/
-Analysis: Has "Brands" (plural) section in header showing they organize by multiple brands. Product titles include brand names like "Stanley water bottles" proving they sell third-party products. Also sells their own "Crane's Gear" but primarily a multi-brand retailer → GOOD FIT
-
-Example 2 - GOOD FIT:
-Website: http://www.getzs.com
-Analysis: Has "All Brands" section in header. Collection pages have brand filter dropdown showing multiple brands they carry, which is only useful if stocking multiple brands → GOOD FIT
-
-Example 3 - NOT A FIT:
-Website: https://www.rockybrands.com/
-Analysis: Has "Brands" section but investigation shows they only sell brands within their own corporate portfolio (Rocky Brands Inc.). This is a closed portfolio system, not open to outside brands → NOT A FIT
-
-Example 4 - NOT A FIT:
-Website: https://www.freemanoutdoorgear.com/
-Analysis: "Brand" (singular) section is about their own company story. Has "Dealers" page showing OTHER stores sell their products, meaning they're the manufacturer looking for distributors, not a retailer who stocks other brands → NOT A FIT
-
-Example 5 - NOT A FIT:
-Website: https://viktos.com/
-Analysis: No "Brands" page. Product titles lack brand names (just "Ranger Trainer Boot" not "[Brand] Ranger Trainer Boot") indicating everything is their own line. "Dealer Sign Up" in footer means they recruit stores to sell THEIR products. FAQ asks "How do I clean my Viktos Apparel?" only mentioning their brand. They're a manufacturer selling TO retailers, not a retailer → NOT A FIT
-
-KEY INVESTIGATION STEPS:
-1. Check header/navigation/menu/footer for "Brands" (plural), "Companies We Carry," "Shop by Brand" vs "Brand" (singular)
-2. Look for "Dealers," "Wholesale," "Become a Distributor/Seller," "Stockists," or "Where to Buy" in menu/navigation/footer (red flag - they're a manufacturer)
-3. Check product titles - do they lead with or end with brand names? ("Stanley 2L Water Bottle" = good sign; "2L Water Bottle" = likely their own product)
-4. Look for brand filter options in product collections
-5. Check FAQ - does it reference only their own brand name?
-
-MAKING JUDGMENT CALLS:
-If a company shows BOTH positive and negative indicators, prioritize based on:
-- If they have "Dealers/Wholesale" pages AND sell multiple brands, they might be a hybrid (manufacturer + retailer) - mark as a GOOD FIT and note both aspects
-- If they have a "Brands" section but it's clearly only their portfolio companies, they're NOT A FIT
-- If they sell mostly other brands but have 1-2 of their own products mixed in, they're a GOOD FIT
-- The core question: "Would this company stock and resell OUR products, or would they expect US to distribute THEIRS?"
+---
 
 Company Website: {company_website}
-Company LinkedIn: {company_linkedin}
-Company Name: {company_data.get('name', 'N/A')}
 Company Description: {company_data.get('description', 'N/A')}
+Company Name: {company_data.get('name', 'N/A')}
 Company Industry: {company_data.get('industry', 'N/A')}
 
-{chr(10) + '='*80 + chr(10) + 'SCRAPED WEBSITE CONTENT:' + chr(10) + '='*80 + chr(10) + scraped_content + chr(10) + '='*80 if scraped_content else ''}
-
-VERDICT: Only respond with YES, if they are a good fit, or NO, if they are not a good fit or you are not sure."""
-
-    return template
+{chr(10) + '='*80 + chr(10) + 'SCRAPED WEBSITE CONTENT:' + chr(10) + '='*80 + chr(10) + scraped_content + chr(10) + '='*80 if scraped_content else ''}"""
+    
+    return prompt
 
 
-def extract_person_and_company_data(prospeo_person_response: Dict) -> Tuple[Dict, Dict]:
+def format_keyword_match_prompt(
+    company_data: Dict,
+    keywords: list,
+    scraped_content: Optional[str] = None,
+    our_company_details: str = None
+) -> str:
+    """
+    Format the keyword match check prompt (Check #2).
+    Focuses ONLY on whether company matches the specified keywords/product categories.
+    
+    Args:
+        company_data: Company information dictionary
+        keywords: List of keywords to match against
+        scraped_content: Scraped website content (optional)
+        our_company_details: Description of our company and products (optional)
+    
+    Returns:
+        Formatted prompt string for keyword match check
+    """
+    company_website = company_data.get('website') or company_data.get('domain') or 'N/A'
+    
+    if company_website and company_website != 'N/A' and not company_website.startswith('http'):
+        company_website = f"https://{company_website}"
+    
+    keywords_list = ', '.join(keywords) if keywords else 'N/A'
+    our_company_info = our_company_details or 'Multi-brand retailer/reseller looking for partners to stock our products'
+    
+    prompt = f"""Determine if this company is a GOOD PRODUCT/INDUSTRY FIT based on whether the products they sell align with our company's products and target market.
+
+CONTEXT: This company has already been identified as a multi-brand retailer/reseller. Now we need to determine if they sell products in categories that align with ours.
+
+GOOD FIT = Their product categories align with our products and target market
+
+Why we want these companies: They already sell products similar to or complementary with ours, meaning our products would fit naturally into their existing catalog and customer base.
+
+Positive indicators to look for:
+- Product categories on their website match our target keywords/industries
+  WHY: If they already have sections for our product type, they have existing customers looking for what we sell
+  
+- Collections or departments that align with our product categories
+  WHY: Organized sections show they dedicate shelf space and marketing to our product type
+  
+- Selling products that are complementary to ours (not identical, but used by the same customers)
+  WHY: Complementary products mean their customers would be interested in our products too
+  
+- Customer base and market positioning aligns with our target market
+  WHY: If they serve the same demographic/use case, our products will resonate with their existing customers
+  
+- Mentions categories, use cases, or customer segments that match our target keywords
+  WHY: This shows they actively market to the audience we want to reach
+
+- SERVICE-BASED BUSINESSES THAT SELL RELEVANT PRODUCTS: Even if the company is primarily a service provider (e.g., golf courses, ski resorts, fitness centers, salons), they are a GOOD FIT if they have a pro shop, retail section, or sell products related to our category
+  WHY: Service businesses often have retail components where they sell relevant products to their customers. A golf course with a pro shop is a perfect fit for golf equipment. A ski resort with a gear shop is perfect for winter sports equipment. These are legitimate retail partners even though retail isn't their primary business.
+
+NOT A FIT = Their product focus doesn't align with our category
+
+Why we want to avoid these companies: Even if they're a great multi-brand retailer, if they don't sell products in our category, they won't be interested in stocking our products and their customers won't be our target audience.
+
+Negative indicators to look for:
+- Product categories are completely different from our target keywords
+  WHY: If they specialize in unrelated categories, our products won't fit their catalog or appeal to their customers
+  
+- Focus on a different price point or market segment than ours
+  WHY: A luxury retailer won't stock mass-market products, and vice versa - misalignment in positioning means they won't carry our products
+  
+- Serve a completely different customer demographic or use case
+  WHY: If their customers have different needs/interests, our products won't sell well in their store
+  
+- No existing categories where our products would naturally fit
+  WHY: If there's no logical section for our products, they'd have to create entirely new categories - unlikely to happen
+  
+- Website description or about page indicates they specialize in categories far from ours
+  WHY: Companies that position themselves as specialists in other areas typically won't dilute their brand with unrelated products
+  
+- Service-based business with NO retail component or product sales
+  WHY: If they're purely a service provider with no pro shop, retail section, or product sales, they can't stock our products
+
+KEY INVESTIGATION STEPS:
+1. Review their main navigation/categories - do any align with our target keywords?
+2. Check their product collections - are they selling items in our category or adjacent categories?
+3. For service-based businesses (golf courses, gyms, resorts, etc.) - look for "Pro Shop," "Shop," "Gear," "Retail," or product pages
+4. Look at their "About" section - do they describe themselves using any of our target keywords/industries?
+5. Review sample product pages - what's the price point, quality level, and customer demographic?
+6. Check their website copy and imagery - does it match our brand positioning and target market?
+
+MAKING JUDGMENT CALLS:
+- If their categories are ADJACENT to ours (complementary but not identical), they're still a GOOD FIT
+  Example: We sell camping gear, they sell outdoor apparel - GOOD FIT (same customers)
+  
+- If they have ONE relevant category among many unrelated ones, they're still a GOOD FIT
+  Example: They sell home goods, garden supplies, AND outdoor gear (our category) - GOOD FIT
+  
+- Service businesses with retail components are a GOOD FIT
+  Example: Golf course with pro shop selling golf equipment - GOOD FIT
+  Example: Ski resort with gear shop selling ski/snowboard equipment - GOOD FIT
+  Example: Fitness center with retail section selling athletic apparel - GOOD FIT
+  Example: Salon with product retail area - GOOD FIT (if we sell beauty/hair products)
+  
+- Service businesses WITHOUT any retail component are NOT A FIT
+  Example: Golf course with no pro shop or product sales - NOT A FIT
+  Example: Pure service provider with no merchandise - NOT A FIT
+  
+- If their market positioning is drastically different (luxury vs. budget), lean toward NOT A FIT even if categories overlap
+  Example: We sell affordable hiking gear, they only sell premium/luxury outdoor equipment - Consider carefully
+  
+- If you're uncertain whether a category aligns, err on the side of GOOD FIT - we can refine later
+  
+- The core question: "Would their existing customers be interested in our products, and do they have a retail channel to sell them?"
+
+Respond with:
+
+VERDICT: Only respond with YES if they are a good fit, or NO if they are not a good fit or you are not sure.
+
+PRODUCT_CATEGORIES: [List of specific product categories they sell, comma-separated. Examples: Golf Equipment, Athletic Apparel, Pro Shop Items, Sporting Goods. Be specific and comprehensive - these will be used for future keyword matching.]
+
+MARKET_SEGMENTS: [List of market segments they serve, comma-separated. Examples: Golf Courses, Pro Shops, Athletic Retailers, Sporting Goods Stores. Describe their target customer base.]
+
+REASONING: [1-2 sentences explaining why their product focus does or doesn't align with our target market]
+
+EVIDENCE: [Top 2-3 specific categories, products, or website elements that support your verdict]
+
+---
+
+Now analyze this company:
+
+Our Company: {our_company_info}
+
+Target Keywords/Industries: {keywords_list}
+
+Company Website: {company_website}
+
+Company Description: {company_data.get('description', 'N/A')}
+
+Company Name: {company_data.get('name', 'N/A')}
+
+Company Industry: {company_data.get('industry', 'N/A')}
+
+{chr(10) + '='*80 + chr(10) + 'SCRAPED WEBSITE CONTENT:' + chr(10) + '='*80 + chr(10) + scraped_content + chr(10) + '='*80 if scraped_content else ''}"""
+    
+    return prompt
+
+
+def extract_person_and_company_data(prospeo_response: Dict) -> Tuple[Dict, Dict]:
     """
     Extract person and company data from Prospeo API response.
+    
+    Args:
+        prospeo_response: Raw response from Prospeo API
     
     Returns:
         Tuple of (person_data, company_data) dictionaries
     """
-    person_data = {
-        'id': prospeo_person_response.get('id'),
-        'name': prospeo_person_response.get('name'),
-        'email': prospeo_person_response.get('email'),
-        'title': prospeo_person_response.get('title'),
-        'linkedin_url': prospeo_person_response.get('linkedin_url'),
-    }
+    # Handle person response structure
+    person_data = {}
+    company_data = {}
     
-    # Company data might be nested or separate
-    company = prospeo_person_response.get('company') or {}
-    company_data = {
-        'id': company.get('id') or prospeo_person_response.get('company_id'),
-        'name': company.get('name') or prospeo_person_response.get('company_name'),
-        'description': company.get('description') or prospeo_person_response.get('company_description'),
-        'domain': company.get('domain') or prospeo_person_response.get('company_domain'),
-        'website': company.get('website') or prospeo_person_response.get('company_website'),
-        'industry': company.get('industry') or prospeo_person_response.get('company_industry'),
-        'size': company.get('size') or prospeo_person_response.get('company_size'),
-        'location': company.get('location') or prospeo_person_response.get('company_location'),
-    }
+    if 'person' in prospeo_response:
+        person_data = prospeo_response['person']
+    elif 'id' in prospeo_response and 'name' in prospeo_response:
+        person_data = prospeo_response
+    else:
+        person_data = prospeo_response
+    
+    # Extract company data
+    if 'company' in prospeo_response:
+        company_data = prospeo_response['company']
+    elif 'company' in person_data:
+        company_data = person_data['company']
     
     return person_data, company_data
 
 
-def sanitize_csv_field(value: any) -> str:
-    """Sanitize a value for CSV output."""
+def sanitize_csv_field(value: Any) -> str:
+    """
+    Sanitize a field value for CSV output.
+    
+    Args:
+        value: Value to sanitize
+    
+    Returns:
+        Sanitized string
+    """
     if value is None:
-        return ""
-    if isinstance(value, (dict, list)):
-        return json.dumps(value)
-    return str(value).replace('\n', ' ').replace('\r', '')
+        return ''
+    
+    # Convert to string
+    str_value = str(value)
+    
+    # Remove or escape problematic characters
+    str_value = str_value.replace('\n', ' ').replace('\r', ' ')
+    str_value = str_value.replace('"', '""')  # Escape quotes for CSV
+    
+    return str_value
+
+
+def extract_unique_companies_from_persons(persons: List[Dict]) -> List[Dict]:
+    """
+    Extract unique companies from a list of person responses.
+    
+    Args:
+        persons: List of person response dictionaries
+    
+    Returns:
+        List of unique company dictionaries
+    """
+    seen_company_ids = set()
+    unique_companies = []
+    
+    for person in persons:
+        person_data, company_data = extract_person_and_company_data(person)
+        
+        if company_data:
+            company_id = company_data.get('id') or company_data.get('company_id')
+            if company_id and company_id not in seen_company_ids:
+                seen_company_ids.add(company_id)
+                unique_companies.append(company_data)
+    
+    return unique_companies
+
+
+def extract_person_seniority_filter(parsed_input: Dict) -> Dict:
+    """
+    Extract person seniority filter from parsed input.
+    
+    Args:
+        parsed_input: Parsed input dictionary
+    
+    Returns:
+        Dictionary with person_seniority filter structure for Prospeo
+    """
+    prospeo_filters = parsed_input.get('prospeo_filters', {})
+    
+    if 'person_seniority' in prospeo_filters:
+        seniority_values = prospeo_filters['person_seniority']
+        if isinstance(seniority_values, list):
+            return {
+                'person_seniority': {
+                    'include': seniority_values
+                }
+            }
+        else:
+            return {
+                'person_seniority': {
+                    'include': [seniority_values]
+                }
+            }
+    
+    return {}
+
+
+def parse_keyword_check_response(response_text: str) -> Dict[str, Any]:
+    """
+    Parse structured AI response from Check #2 to extract:
+    - VERDICT (YES/NO)
+    - PRODUCT_CATEGORIES (list)
+    - MARKET_SEGMENTS (list)
+    - REASONING (text)
+    - EVIDENCE (text)
+    
+    Args:
+        response_text: Full AI response text
+    
+    Returns:
+        Dictionary with parsed components
+    """
+    result = {
+        'matches_keywords': False,
+        'response_text': response_text,
+        'product_categories': [],
+        'market_segments': [],
+        'reasoning': '',
+        'evidence': ''
+    }
+    
+    response_upper = response_text.upper()
+    
+    # Extract VERDICT
+    if 'VERDICT:' in response_upper:
+        verdict_line = [line for line in response_text.split('\n') if 'VERDICT:' in line.upper()]
+        if verdict_line:
+            verdict_text = verdict_line[0].upper()
+            result['matches_keywords'] = 'YES' in verdict_text and 'NO' not in verdict_text.split(':')[1]
+    else:
+        # Fallback: check first line or entire response for YES/NO
+        first_line = response_text.split('\n')[0].upper()
+        result['matches_keywords'] = 'YES' in first_line or ('VERDICT' not in response_upper and 'YES' in response_upper.split('\n')[0])
+    
+    # Extract PRODUCT_CATEGORIES
+    if 'PRODUCT_CATEGORIES:' in response_upper:
+        categories_match = re.search(r'PRODUCT_CATEGORIES:\s*(.*?)(?=\n(?:MARKET_SEGMENTS|REASONING|EVIDENCE|$))', response_text, re.IGNORECASE | re.DOTALL)
+        if categories_match:
+            categories_str = categories_match.group(1).strip()
+            # Parse comma-separated or line-separated categories
+            categories = [cat.strip() for cat in re.split(r'[,\n]', categories_str) if cat.strip()]
+            # Remove brackets if present
+            categories = [re.sub(r'^\[|\]$', '', cat).strip() for cat in categories]
+            result['product_categories'] = categories
+    
+    # Extract MARKET_SEGMENTS
+    if 'MARKET_SEGMENTS:' in response_upper:
+        segments_match = re.search(r'MARKET_SEGMENTS:\s*(.*?)(?=\n(?:REASONING|EVIDENCE|$))', response_text, re.IGNORECASE | re.DOTALL)
+        if segments_match:
+            segments_str = segments_match.group(1).strip()
+            # Parse comma-separated or line-separated segments
+            segments = [seg.strip() for seg in re.split(r'[,\n]', segments_str) if seg.strip()]
+            # Remove brackets if present
+            segments = [re.sub(r'^\[|\]$', '', seg).strip() for seg in segments]
+            result['market_segments'] = segments
+    
+    # Extract REASONING
+    if 'REASONING:' in response_upper:
+        reasoning_match = re.search(r'REASONING:\s*(.*?)(?=\n(?:EVIDENCE|$))', response_text, re.IGNORECASE | re.DOTALL)
+        if reasoning_match:
+            result['reasoning'] = reasoning_match.group(1).strip()
+    
+    # Extract EVIDENCE
+    if 'EVIDENCE:' in response_upper:
+        evidence_match = re.search(r'EVIDENCE:\s*(.*?)(?=\n|$)', response_text, re.IGNORECASE | re.DOTALL)
+        if evidence_match:
+            result['evidence'] = evidence_match.group(1).strip()
+    
+    return result
+
+
+def quick_match_keywords_against_categories(
+    new_keywords: List[str],
+    stored_categories: List[str]
+) -> Dict[str, Any]:
+    """
+    Quick match without AI - match new keywords against stored product categories.
+    
+    Args:
+        new_keywords: List of keywords from current search
+        stored_categories: List of product categories stored from previous Check #2
+    
+    Returns:
+        Dictionary with:
+        - confidence: 'strong_match' | 'no_match' | 'uncertain'
+        - matched: bool or None (None if uncertain)
+        - match_count: int
+        - reasoning: str
+    """
+    if not new_keywords or not stored_categories:
+        return {
+            'confidence': 'uncertain',
+            'matched': None,
+            'match_count': 0,
+            'reasoning': 'Missing keywords or categories for matching'
+        }
+    
+    # Normalize (lowercase, strip)
+    keywords_normalized = [kw.lower().strip() for kw in new_keywords]
+    categories_normalized = [cat.lower().strip() for cat in stored_categories]
+    
+    # Check for matches
+    matches = []
+    for keyword in keywords_normalized:
+        # Exact match
+        if keyword in categories_normalized:
+            matches.append(keyword)
+            continue
+        
+        # Partial match (keyword contained in category or vice versa)
+        for category in categories_normalized:
+            if keyword in category or category in keyword:
+                matches.append(f"{keyword} → {category}")
+                break
+    
+    match_count = len(matches)
+    total_keywords = len(keywords_normalized)
+    
+    # Determine confidence
+    if match_count == 0:
+        return {
+            'confidence': 'no_match',
+            'matched': False,
+            'match_count': 0,
+            'reasoning': f'No keywords matched stored categories: {stored_categories}'
+        }
+    elif match_count == total_keywords:
+        return {
+            'confidence': 'strong_match',
+            'matched': True,
+            'match_count': match_count,
+            'reasoning': f'All {total_keywords} keywords matched categories: {matches}'
+        }
+    elif match_count >= total_keywords * 0.5:  # At least 50% match
+        return {
+            'confidence': 'strong_match',
+            'matched': True,
+            'match_count': match_count,
+            'reasoning': f'{match_count}/{total_keywords} keywords matched (strong match): {matches}'
+        }
+    else:
+        return {
+            'confidence': 'uncertain',
+            'matched': None,  # Uncertain
+            'match_count': match_count,
+            'reasoning': f'Only {match_count}/{total_keywords} keywords matched - ambiguous, needs AI check: {matches}'
+        }
