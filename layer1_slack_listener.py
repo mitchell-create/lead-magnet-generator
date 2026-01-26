@@ -65,7 +65,7 @@ def handle_slash_command(ack, respond, command):
 **Example:**
 `/lead-magnet keywords=golf pro shops | industry=General Retail | seniority=Founder,C-Suite | our-company-details="We sell premium golf equipment"`
 
-**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed)."""")
+**Note:** Emails are automatically enriched AFTER qualification (no verified-email parameter needed).""")
         return
     
     # Parse the input
